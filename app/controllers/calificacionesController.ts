@@ -9,6 +9,7 @@ import Entrega from '#models/entrega'
 import Notificacion from '#models/notificacion'
 import Role from '#models/role'
 import Usuario from '#models/usuario'
+import NotificationService from '#services/notification_service'
 
 function clampNota(value: number) {
   if (value < 1.0) return 1.0
@@ -158,6 +159,25 @@ export default class CalificacionesController {
         },
         institucionId: asignacion.institucionId,
       })
+
+      // Enviar notificación push
+      try {
+        await NotificationService.sendToUser(
+          acudiente.usuarioId,
+          'Calificación publicada',
+          `Tu entrega fue calificada: ${calificacion.nota}/5.0`,
+          {
+            type: 'calificacion',
+            asignacionId: asignacion.id.toString(),
+            entregaId: entrega.id.toString(),
+            calificacionId: calificacion.id.toString(),
+            nota: calificacion.nota?.toString() || '',
+          }
+        )
+      } catch (notifError) {
+        console.error('Error al enviar notificación push:', notifError)
+        // No fallar la calificación si la notificación falla
+      }
     }
 
     return response.ok({

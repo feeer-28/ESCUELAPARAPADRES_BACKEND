@@ -12,10 +12,10 @@ export default class Funcionario extends BaseModel {
   @column({ isPrimary: true })
   declare id: number
 
-  @column()
+  @column({ columnName: 'nombre' })
   declare nombre: string
 
-  @column()
+  @column({ columnName: 'apellido' })
   declare apellido: string
 
   @column()

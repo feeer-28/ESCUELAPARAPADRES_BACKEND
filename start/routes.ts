@@ -13,6 +13,11 @@ import './routes/tareas.js'
 import './routes/asignaciones.js'
 import './routes/entregas.js'
 import './routes/calificaciones.js'
+import './routes/admin.js'
+import './routes/usuarios.js'
+import './routes/auth.js'
+import './routes/rectores.js'
+import './routes/coordinadores.js'
 
 
 

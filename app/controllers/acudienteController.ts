@@ -223,6 +223,7 @@ export default class AcudienteController {
         correo: usuario.correo,
         rolId: usuario.rolId,
         estaActivo: usuario.estaActivo,
+        debeCambiarContrasena: usuario.debeCambiarContrasena,
       },
     })
   }
