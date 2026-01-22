@@ -6,9 +6,11 @@ import BancoTarea from '#models/banco_tarea'
 import Categoria from '#models/categoria'
 import Curso from '#models/curso'
 import Docente from '#models/docente'
+import Estudiante from '#models/estudiante'
 import Periodo from '#models/periodo'
 import Role from '#models/role'
 import Usuario from '#models/usuario'
+import NotificationService from '#services/notification_service'
 
 export default class AsignacionesController {
   async store(ctx: HttpContext) {
@@ -131,6 +133,42 @@ export default class AsignacionesController {
 
     if (ids.length > 1) {
       await asignacion.related('cursos').attach(ids)
+    }
+
+    // Enviar notificaciones push a los acudientes de los estudiantes
+    try {
+      // Obtener todos los estudiantes de los cursos asignados
+      const estudiantes = await Estudiante.query()
+        .whereIn('curso_id', ids)
+        .preload('acudientes', (query) => {
+          query.preload('usuario')
+        })
+
+      // Recolectar IDs únicos de usuarios acudientes
+      const acudienteUserIds = new Set<number>()
+      estudiantes.forEach((estudiante) => {
+        estudiante.acudientes.forEach((acudiente) => {
+          if (acudiente.usuarioId) {
+            acudienteUserIds.add(acudiente.usuarioId)
+          }
+        })
+      })
+
+      if (acudienteUserIds.size > 0) {
+        await NotificationService.sendToMultipleUsers(
+          Array.from(acudienteUserIds),
+          'Nueva tarea asignada',
+          `Se ha asignado la tarea: ${asignacion.titulo}`,
+          {
+            type: 'nueva_tarea',
+            asignacionId: asignacion.id.toString(),
+            titulo: asignacion.titulo,
+          }
+        )
+      }
+    } catch (notifError) {
+      console.error('Error al enviar notificaciones:', notifError)
+      // No fallar la creación de asignación si las notificaciones fallan
     }
 
     return response.created(asignacion)

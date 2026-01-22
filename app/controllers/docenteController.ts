@@ -57,6 +57,7 @@ export default class DocenteController {
         id: usuario.id,
         correo: usuario.correo,
         rolId: usuario.rolId,
+        debeCambiarContrasena: usuario.debeCambiarContrasena,
       },
     })
   }
