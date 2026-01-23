@@ -5,7 +5,7 @@ services:
     region: oregon
     plan: free
     branch: feature/mobile-functionality
-    buildCommand: npm ci --include=dev && npm run build && node ace migration:run --force
+    buildCommand: npm ci --include=dev && node ace migration:run --force && npm run build
     startCommand: cd build && npm ci --omit=dev && node bin/server.js
     healthCheckPath: /api/movil/soporte/info
     envVars:
