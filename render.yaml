@@ -1,5 +1,4 @@
 services:
-  # Aplicación web
   - type: web
     name: escuelaparapadres-backend
     env: node
@@ -8,7 +7,6 @@ services:
     branch: feature/mobile-functionality
     buildCommand: npm ci --include=dev && npm run build
     startCommand: cd build && npm ci --omit=dev && node bin/server.js
-    nodeVersion: 20
     healthCheckPath: /api/movil/soporte/info
     envVars:
       - key: NODE_ENV
@@ -21,8 +19,3 @@ services:
         value: info
       - key: APP_NAME
         value: ESCUELAPARAPADRES
-
-databases:
-  - name: escuelaparapadres-db
-    databaseName: escuelaparapadres
-    user: escuela_user
