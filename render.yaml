@@ -1,0 +1,40 @@
+services:
+  # Base de datos PostgreSQL
+  - type: pserv
+    name: escuelaparapadres-db
+    env: docker
+    plan: free
+    region: oregon
+    
+  # Aplicación web
+  - type: web
+    name: escuelaparapadres-backend
+    env: node
+    region: oregon
+    plan: free
+    branch: feature/mobile-functionality
+    buildCommand: npm run build
+    startCommand: cd build && npm ci --omit=dev && node bin/server.js
+    healthCheckPath: /api/movil/soporte/info
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_KEY
+        value: ZsSyLQ0bAilrP5mWD9rGaaHLogmkqO1l
+      - key: JWT_SECRET
+        value: c291702bdb4749589d66b58423fd8d3da86941638adc8fd75b1ec3ab9a6bd0a3
+      - key: LOG_LEVEL
+        value: info
+      - key: APP_NAME
+        value: ESCUELAPARAPADRES
+      - key: DATABASE_URL
+        fromDatabase:
+          name: escuelaparapadres-db
+          property: connectionString
+    
+databases:
+  - name: escuelaparapadres-db
+    databaseName: escuelaparapadres
+    user: escuela_user
+    plan: free
+    region: oregon
