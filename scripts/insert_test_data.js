@@ -1,5 +1,10 @@
 import pg from 'pg'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
 const { Client } = pg
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const client = new Client({
   connectionString:
@@ -7,76 +12,114 @@ const client = new Client({
   ssl: { rejectUnauthorized: false },
 })
 
-async function insertTestData() {
+async function setupDatabase() {
   try {
     await client.connect()
     console.log('✅ Conectado a Render PostgreSQL')
 
-    const result = await client.query(`
-      DO $$
-      DECLARE
-        v_usuario_id INT;
-        v_acudiente_id INT;
-        v_grado_id INT;
-        v_periodo_id INT;
-        v_curso_id INT;
-        v_estudiante_id INT;
-      BEGIN
-        -- 1. Usuario acudiente
-        INSERT INTO usuarios (correo, contrasena_hash, rol_id, esta_activo, debe_cambiar_contrasena, creado_en, actualizado_en)
-        VALUES ('acudiente.test@gmail.com', '$scrypt$n=16384,r=8,p=1$vQaCY+/JaJrTrBHFxB+2aw$RFcb8cj7fYzNKvvUmR6IfNCKN5qPBYrHn3kz0vNpNPcWYqrv0lF4fMMz1nGQqYe2LrEZRGqfTCJt7qTRwjTxdw', 3, true, false, NOW(), NOW())
-        ON CONFLICT (correo) DO UPDATE SET esta_activo = true
-        RETURNING id INTO v_usuario_id;
+    // Verificar si las tablas existen
+    const tablesResult = await client.query(`
+      SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+    `)
+    const tables = tablesResult.rows.map(r => r.tablename)
+    
+    if (!tables.includes('usuarios')) {
+      console.log('🔄 Creando tablas desde schema.sql...')
+      const schemaPath = path.join(__dirname, '..', 'database', 'create_tables.sql')
+      const schema = fs.readFileSync(schemaPath, 'utf8')
+      await client.query(schema)
+      console.log('✅ Tablas creadas exitosamente')
+    } else {
+      console.log('✅ Las tablas ya existen')
+    }
 
-        -- 2. Acudiente
-        INSERT INTO acudientes (usuario_id, nombres, apellidos, tipo_documento, numero_documento, telefono, telefono_alternativo, correo, direccion, parentesco, ocupacion, tipo_trabajo, nivel_educativo, aporta_economia, horario_trabajo, creado_en, actualizado_en)
-        VALUES (v_usuario_id, 'María Fernanda', 'García López', 'CC', '1234567890', '3101234567', '3209876543', 'acudiente.test@gmail.com', 'Calle 5 # 10-20, Popayán', 'Madre', 'Profesora', 'Dependiente', 'Profesional', true, 'Diurno', NOW(), NOW())
-        ON CONFLICT DO NOTHING
-        RETURNING id INTO v_acudiente_id;
+    // Crear datos de prueba
+    console.log('🔄 Creando datos de prueba...')
 
-        -- 3. Grado
-        INSERT INTO grados (nombre, orden) VALUES ('Sexto', 6)
-        ON CONFLICT DO NOTHING
-        RETURNING id INTO v_grado_id;
-        IF v_grado_id IS NULL THEN SELECT id INTO v_grado_id FROM grados WHERE nombre = 'Sexto'; END IF;
-
-        -- 4. Período
-        INSERT INTO periodos (nombre, fecha_inicio, fecha_fin, esta_activo, institucion_id, creado_en, actualizado_en)
-        VALUES ('2026', '2026-01-20', '2026-11-30', true, 1, NOW(), NOW())
-        ON CONFLICT DO NOTHING
-        RETURNING id INTO v_periodo_id;
-        IF v_periodo_id IS NULL THEN SELECT id INTO v_periodo_id FROM periodos WHERE nombre = '2026' LIMIT 1; END IF;
-
-        -- 5. Curso
-        INSERT INTO cursos (nombre, grado_id, jornada, institucion_id)
-        VALUES ('Sexto A', v_grado_id, 'Mañana', 1)
-        ON CONFLICT DO NOTHING
-        RETURNING id INTO v_curso_id;
-        IF v_curso_id IS NULL THEN SELECT id INTO v_curso_id FROM cursos WHERE nombre = 'Sexto A' LIMIT 1; END IF;
-
-        -- 6. Estudiante
-        INSERT INTO estudiantes (nombres, apellidos, tipo_documento, numero_documento, fecha_nacimiento, sexo, grupo_sanguineo, rh, pais_nacimiento, ciudad_nacimiento, estrato, eps, curso_id, creado_en, actualizado_en)
-        VALUES ('Juan Carlos', 'García Pérez', 'TI', '1098765432', '2012-05-15', 'M', 'O', '+', 'Colombia', 'Popayán', 3, 'Sura', v_curso_id, NOW(), NOW())
-        ON CONFLICT DO NOTHING
-        RETURNING id INTO v_estudiante_id;
-        IF v_estudiante_id IS NULL THEN SELECT id INTO v_estudiante_id FROM estudiantes WHERE numero_documento = '1098765432'; END IF;
-
-        -- 7. Relación acudiente-estudiante
-        IF NOT EXISTS (SELECT 1 FROM estudiante_acudiente WHERE estudiante_id = v_estudiante_id AND acudiente_id = v_acudiente_id) THEN
-          INSERT INTO estudiante_acudiente (estudiante_id, acudiente_id, relacion, es_principal, creado_en)
-          VALUES (v_estudiante_id, v_acudiente_id, 'Madre', true, NOW());
-        END IF;
-
-        RAISE NOTICE 'Datos creados exitosamente';
-      END $$;
+    // 1. Roles
+    await client.query(`
+      INSERT INTO roles (id, nombre, esta_activo) VALUES 
+        (1, 'admin_sistema', true),
+        (2, 'docente', true),
+        (3, 'acudiente', true),
+        (4, 'rector', true),
+        (5, 'coordinador', true)
+      ON CONFLICT (id) DO NOTHING
     `)
 
-    console.log('✅ Datos de prueba insertados en Render')
+    // 2. Departamento
+    await client.query(`
+      INSERT INTO departamentos (id, nombre, codigo) VALUES (1, 'Cauca', '19')
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 3. Municipio
+    await client.query(`
+      INSERT INTO municipios (id, nombre, departamento_id, codigo) VALUES (1, 'Popayán', 1, '19001')
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 4. Institución
+    await client.query(`
+      INSERT INTO instituciones (id, nombre, naturaleza, municipio_id, telefono_principal, correo_institucional)
+      VALUES (1, 'Institución Educativa Test', 'Publica', 1, '3001234567', 'contacto@test.edu.co')
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 5. Grado
+    await client.query(`
+      INSERT INTO grados (id, nombre, orden) VALUES (1, 'Sexto', 6)
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 6. Período
+    await client.query(`
+      INSERT INTO periodos (id, nombre, fecha_inicio, fecha_fin, institucion_id, esta_activo)
+      VALUES (1, '2026', '2026-01-20', '2026-11-30', 1, true)
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 7. Curso
+    await client.query(`
+      INSERT INTO cursos (id, nombre, grado_id, jornada, institucion_id)
+      VALUES (1, 'Sexto A', 1, 'Mañana', 1)
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 8. Usuario acudiente
+    await client.query(`
+      INSERT INTO usuarios (id, correo, contrasena_hash, rol_id, esta_activo, debe_cambiar_contrasena)
+      VALUES (1, 'acudiente.test@gmail.com', '$scrypt$n=16384,r=8,p=1$vQaCY+/JaJrTrBHFxB+2aw$RFcb8cj7fYzNKvvUmR6IfNCKN5qPBYrHn3kz0vNpNPcWYqrv0lF4fMMz1nGQqYe2LrEZRGqfTCJt7qTRwjTxdw', 3, true, false)
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 9. Acudiente
+    await client.query(`
+      INSERT INTO acudientes (id, usuario_id, nombres, apellidos, tipo_documento, numero_documento, telefono, correo, parentesco)
+      VALUES (1, 1, 'María Fernanda', 'García López', 'CC', '1234567890', '3101234567', 'acudiente.test@gmail.com', 'Madre')
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 10. Estudiante
+    await client.query(`
+      INSERT INTO estudiantes (id, nombres, apellidos, tipo_documento, numero_documento, fecha_nacimiento, sexo, curso_id)
+      VALUES (1, 'Juan Carlos', 'García Pérez', 'TI', '1098765432', '2012-05-15', 'M', 1)
+      ON CONFLICT (id) DO NOTHING
+    `)
+
+    // 11. Relación acudiente-estudiante
+    await client.query(`
+      INSERT INTO estudiante_acudiente (estudiante_id, acudiente_id, relacion, es_principal)
+      VALUES (1, 1, 'Madre', true)
+      ON CONFLICT DO NOTHING
+    `)
+
+    console.log('\n✅ SETUP COMPLETO')
     console.log('\n📱 CREDENCIALES PARA APP MÓVIL:')
     console.log('   Email: acudiente.test@gmail.com')
     console.log('   Password: Acudiente123!')
     console.log('\n👥 Estudiante vinculado: Juan Carlos García Pérez')
-    console.log('   Documento: 1098765432')
+
   } catch (error) {
     console.error('❌ Error:', error.message)
   } finally {
@@ -84,4 +127,4 @@ async function insertTestData() {
   }
 }
 
-insertTestData()
+setupDatabase()
