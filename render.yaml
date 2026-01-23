@@ -6,9 +6,9 @@ services:
     region: oregon
     plan: free
     branch: feature/mobile-functionality
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: cd build && npm ci --omit=dev && node bin/server.js
-    nodeVersion: 18
+    nodeVersion: 20
     healthCheckPath: /api/movil/soporte/info
     envVars:
       - key: NODE_ENV
