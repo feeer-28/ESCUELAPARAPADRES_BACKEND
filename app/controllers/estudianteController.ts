@@ -1,6 +1,8 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import db from '@adonisjs/lucid/services/db'
 import { DateTime } from 'luxon'
+import app from '@adonisjs/core/services/app'
+import { readFile } from 'node:fs/promises'
 
 import Acudiente from '#models/acudiente'
 import Curso from '#models/curso'
@@ -178,8 +180,10 @@ export default class EstudianteController {
         })
       }
 
-      // Leer buffer del archivo
-      const buffer = await archivo.toBuffer()
+      // Leer buffer del archivo - mover a tmp y leer
+      const tmpDir = app.tmpPath('uploads')
+      await archivo.move(tmpDir, { name: `validar_${Date.now()}.xlsx` })
+      const buffer = await readFile(archivo.filePath!)
 
       // Parsear Excel
       const resultado = ExcelUploadService.parseExcelFile(buffer)
@@ -211,7 +215,7 @@ export default class EstudianteController {
    * Carga masiva de estudiantes desde Excel
    * POST /estudiantes/carga-masiva
    */
-  async cargaMasiva({ request, response, jwtUser }: HttpContext) {
+  async cargaMasiva({ request, response }: HttpContext) {
     try {
       const archivo = request.file('archivo', {
         size: '10mb',
@@ -251,8 +255,10 @@ export default class EstudianteController {
         })
       }
 
-      // Leer buffer del archivo
-      const buffer = await archivo.toBuffer()
+      // Leer buffer del archivo - mover a tmp y leer
+      const tmpDir2 = app.tmpPath('uploads')
+      await archivo.move(tmpDir2, { name: `carga_${Date.now()}.xlsx` })
+      const buffer = await readFile(archivo.filePath!)
 
       // Parsear Excel
       const resultado = ExcelUploadService.parseExcelFile(buffer)

@@ -24,7 +24,7 @@ export default class JwtAuthMiddleware {
 
     let payload: JwtPayload
     try {
-      payload = jwt.verify(token, secret) as JwtPayload
+      payload = jwt.verify(token, secret) as unknown as JwtPayload
     } catch {
       return ctx.response.unauthorized({ message: 'Token inválido o expirado' })
     }

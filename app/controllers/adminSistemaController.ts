@@ -107,7 +107,7 @@ export default class AdminSistemaController {
    * Crear un rector
    * POST /admin/rectores
    */
-  async crearRector({ request, response, jwtUser }: HttpContext) {
+  async crearRector({ request, response }: HttpContext) {
     try {
       const {
         correo,

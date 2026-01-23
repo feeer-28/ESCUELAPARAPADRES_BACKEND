@@ -18,6 +18,7 @@ import './routes/usuarios.js'
 import './routes/auth.js'
 import './routes/rectores.js'
 import './routes/coordinadores.js'
+import './routes/movil.js'
 
 
 

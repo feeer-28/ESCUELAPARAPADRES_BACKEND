@@ -1,12 +1,6 @@
 import { getMessaging } from '#config/firebase'
 import Usuario from '#models/usuario'
 
-interface NotificationPayload {
-  title: string
-  body: string
-  data?: Record<string, string>
-}
-
 export default class NotificationService {
   /**
    * Enviar notificación a un usuario específico
