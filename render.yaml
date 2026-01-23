@@ -19,3 +19,17 @@ services:
         value: info
       - key: APP_NAME
         value: ESCUELAPARAPADRES
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: DB_HOST
+        value: dpg-d5peb2n5c7fs73bkjkrg-a.oregon-postgres.render.com
+      - key: DB_PORT
+        value: 5432
+      - key: DB_USER
+        value: escuela_user
+      - key: DB_PASSWORD
+        value: zMUPjAcgXrgspof9bpxwVJMwHoX9SdBC
+      - key: DB_DATABASE
+        value: escuelaparapadres
