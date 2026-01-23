@@ -24,7 +24,7 @@ router.post('/setup/migrations', async ({ response }) => {
 
 router.post('/setup/seeders', async ({ response }) => {
   try {
-    const { stdout, stderr } = await execAsync('node ace db:seed --force')
+    const { stdout, stderr } = await execAsync('node ace db:seed')
     return response.json({
       success: true,
       message: 'Seeders ejecutados',
@@ -35,6 +35,24 @@ router.post('/setup/seeders', async ({ response }) => {
     return response.status(500).json({
       success: false,
       message: 'Error ejecutando seeders',
+      error: error.message,
+    })
+  }
+})
+
+router.post('/setup/test-data', async ({ response }) => {
+  try {
+    const { stdout, stderr } = await execAsync('node ace db:seed --files=database/seeders/acudiente_test_seeder.ts')
+    return response.json({
+      success: true,
+      message: 'Datos de prueba creados',
+      output: stdout,
+      errors: stderr,
+    })
+  } catch (error) {
+    return response.status(500).json({
+      success: false,
+      message: 'Error creando datos de prueba',
       error: error.message,
     })
   }
