@@ -2,6 +2,7 @@ services:
   - type: web
     name: escuelaparapadres-backend
     env: node
+    runtime: node
     region: oregon
     plan: free
     branch: feature/mobile-functionality
