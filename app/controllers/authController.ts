@@ -150,4 +150,105 @@ export default class AuthController {
   async loginAcudientes(ctx: HttpContext) {
     return this.loginGenerico(ctx, [6], 'acudientes')
   }
+
+  /**
+   * Cambiar contraseña del usuario autenticado
+   * POST /auth/cambiar-password
+   */
+  async cambiarPassword({ request, response, jwtUser }: HttpContext) {
+    try {
+      if (!jwtUser) {
+        return response.unauthorized({ success: false, message: 'No autenticado' })
+      }
+
+      const { contrasenaActual, nuevaContrasena, confirmarContrasena } = request.only([
+        'contrasenaActual',
+        'nuevaContrasena',
+        'confirmarContrasena',
+      ])
+
+      // Validar campos requeridos
+      if (!contrasenaActual || !nuevaContrasena || !confirmarContrasena) {
+        return response.badRequest({
+          success: false,
+          message: 'Todos los campos son requeridos',
+        })
+      }
+
+      // Validar que las contraseñas coincidan
+      if (nuevaContrasena !== confirmarContrasena) {
+        return response.badRequest({
+          success: false,
+          message: 'La nueva contraseña y la confirmación no coinciden',
+        })
+      }
+
+      // Validar longitud mínima
+      if (nuevaContrasena.length < 6) {
+        return response.badRequest({
+          success: false,
+          message: 'La nueva contraseña debe tener al menos 6 caracteres',
+        })
+      }
+
+      // Buscar usuario
+      const usuario = await Usuario.find(jwtUser.id)
+      if (!usuario) {
+        return response.notFound({ success: false, message: 'Usuario no encontrado' })
+      }
+
+      // Verificar contraseña actual
+      const isPasswordValid = await hash.verify(usuario.contrasenaHash, contrasenaActual)
+      if (!isPasswordValid) {
+        return response.badRequest({
+          success: false,
+          message: 'La contraseña actual es incorrecta',
+        })
+      }
+
+      // Actualizar contraseña
+      usuario.contrasenaHash = await hash.make(nuevaContrasena)
+      usuario.debeCambiarContrasena = false
+      await usuario.save()
+
+      return response.ok({
+        success: true,
+        message: 'Contraseña actualizada correctamente',
+      })
+    } catch (error) {
+      console.error('Error al cambiar contraseña:', error)
+      return response.internalServerError({
+        success: false,
+        message: 'Error al cambiar la contraseña',
+      })
+    }
+  }
+
+  /**
+   * Logout - Invalida la sesión actual
+   * POST /auth/logout
+   * Nota: Con JWT el logout es manejado en el frontend eliminando el token.
+   * Este endpoint existe para compatibilidad y registro de auditoría.
+   */
+  async logout({ response, jwtUser }: HttpContext) {
+    try {
+      if (!jwtUser) {
+        return response.unauthorized({ success: false, message: 'No autenticado' })
+      }
+
+      // Opcionalmente registrar en auditoría
+      // await Auditoria.create({ ... })
+
+      return response.ok({
+        success: true,
+        message: 'Sesión cerrada correctamente',
+      })
+    } catch (error) {
+      console.error('Error en logout:', error)
+      return response.internalServerError({
+        success: false,
+        message: 'Error al cerrar sesión',
+      })
+    }
+  }
 }

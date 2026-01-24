@@ -1,8 +1,10 @@
 import type { HttpContext } from '@adonisjs/core/http'
+import app from '@adonisjs/core/services/app'
 import hash from '@adonisjs/core/services/hash'
 import jwt from 'jsonwebtoken'
 import { DateTime } from 'luxon'
 import db from '@adonisjs/lucid/services/db'
+import { mkdir } from 'node:fs/promises'
 
 import Acudiente from '#models/acudiente'
 import Asignacion from '#models/asignacion'
@@ -1004,6 +1006,7 @@ export default class MovilController {
   /**
    * HU-31: Enviar evidencia de tarea
    * POST /asignaciones/:id/entregas
+   * Soporta: archivos multipart, URLs, y texto
    */
   async enviarEntrega({ params, request, response, jwtUser }: HttpContext) {
     try {
@@ -1016,9 +1019,11 @@ export default class MovilController {
 
       const asignacionId = params.id
       const estudianteId = request.input('estudianteId') || request.input('estudiante_id')
-      const descripcion = request.input('descripcion') || request.input('evidenciaTexto')
-      const archivos = request.input('archivos') || request.input('archivosUrl')
+      const descripcion = request.input('descripcion') || request.input('evidenciaTexto') || request.input('evidencia_texto')
+      const archivosUrl = request.input('archivos') || request.input('archivosUrl') || request.input('archivos_url')
+      const nombreEnvio = request.input('nombreEnvio') || request.input('nombre_envio')
 
+      // ========== VALIDACIÓN: estudianteId requerido ==========
       if (!estudianteId) {
         return response.status(400).json({
           success: false,
@@ -1026,14 +1031,7 @@ export default class MovilController {
         })
       }
 
-      if (!descripcion && !archivos) {
-        return response.status(400).json({
-          success: false,
-          errors: ['Debes agregar una descripción o al menos un archivo'],
-        })
-      }
-
-      // Verificar vinculación acudiente-estudiante
+      // ========== VERIFICAR ACUDIENTE ==========
       const acudiente = await Acudiente.query()
         .where('usuario_id', jwtUser.id)
         .preload('estudiantes')
@@ -1046,6 +1044,7 @@ export default class MovilController {
         })
       }
 
+      // ========== VERIFICAR VINCULACIÓN ACUDIENTE-ESTUDIANTE ==========
       const esVinculado = acudiente.estudiantes.some((e) => e.id === Number(estudianteId))
       if (!esVinculado) {
         return response.status(403).json({
@@ -1054,7 +1053,7 @@ export default class MovilController {
         })
       }
 
-      // Verificar que la asignación existe
+      // ========== VERIFICAR QUE LA ASIGNACIÓN EXISTE ==========
       const asignacion = await Asignacion.find(asignacionId)
       if (!asignacion) {
         return response.status(404).json({
@@ -1063,7 +1062,51 @@ export default class MovilController {
         })
       }
 
-      // Verificar que no esté ya calificada
+      // ========== VERIFICAR QUE LA ASIGNACIÓN CORRESPONDE AL CURSO DEL ESTUDIANTE ==========
+      const estudiante = await Estudiante.find(estudianteId)
+      if (!estudiante) {
+        return response.status(404).json({
+          success: false,
+          message: 'Estudiante no encontrado',
+        })
+      }
+
+      let asignacionCorrespondeAlCurso = false
+      if (asignacion.cursoId && asignacion.cursoId === estudiante.cursoId) {
+        asignacionCorrespondeAlCurso = true
+      } else {
+        // Verificar en tabla pivot asignacion_curso
+        const match = await db
+          .from('asignacion_curso')
+          .where('asignacion_id', asignacionId)
+          .where('curso_id', estudiante.cursoId)
+          .first()
+        asignacionCorrespondeAlCurso = Boolean(match)
+      }
+
+      if (!asignacionCorrespondeAlCurso) {
+        return response.status(403).json({
+          success: false,
+          message: 'La asignación no corresponde al curso del estudiante',
+        })
+      }
+
+      // ========== VERIFICAR FECHA LÍMITE ==========
+      if (asignacion.fechaVencimiento) {
+        const ahora = DateTime.now()
+        const fechaLimite = asignacion.fechaVencimiento
+
+        if (ahora > fechaLimite) {
+          // Calcular días de retraso
+          const diasRetraso = Math.ceil(ahora.diff(fechaLimite, 'days').days)
+          
+          // Permitir entrega pero marcar como tardía (opcional: puedes bloquearla)
+          // Por ahora solo advertimos pero permitimos
+          console.log(`Entrega tardía: ${diasRetraso} día(s) de retraso`)
+        }
+      }
+
+      // ========== VERIFICAR QUE NO ESTÉ YA CALIFICADA ==========
       const calificacionExistente = await Calificacion.query()
         .where('asignacion_id', asignacionId)
         .where('estudiante_id', estudianteId)
@@ -1076,19 +1119,140 @@ export default class MovilController {
         })
       }
 
-      // Verificar si ya existe entrega (actualizar en lugar de crear)
+      // ========== PROCESAR ARCHIVOS MULTIPART (UPLOAD REAL) ==========
+      const extensionesPermitidas = [
+        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt',
+        'jpg', 'jpeg', 'png', 'webp', 'gif',
+        'mp4', 'mov', 'mkv', 'avi',
+        'mp3', 'wav', 'm4a',
+      ]
+
+      // Intentar obtener archivos de múltiples campos posibles
+      const archivosMultipart = request.files('archivos', {
+        size: '50mb',
+        extnames: extensionesPermitidas,
+      })
+
+      const archivoUnico = request.file('archivo', {
+        size: '50mb',
+        extnames: extensionesPermitidas,
+      })
+
+      const archivoMultipart = request.file('file', {
+        size: '50mb',
+        extnames: extensionesPermitidas,
+      })
+
+      const uploadedFiles = [
+        ...archivosMultipart,
+        ...(archivoUnico ? [archivoUnico] : []),
+        ...(archivoMultipart ? [archivoMultipart] : []),
+      ]
+
+      // ========== VALIDAR QUE HAY CONTENIDO ==========
+      if (!descripcion && !archivosUrl && uploadedFiles.length === 0) {
+        return response.status(400).json({
+          success: false,
+          errors: ['Debes agregar una descripción o al menos un archivo'],
+        })
+      }
+
+      // ========== VERIFICAR SI YA EXISTE ENTREGA ==========
       let entrega = await Entrega.query()
         .where('asignacion_id', asignacionId)
         .where('estudiante_id', estudianteId)
         .first()
 
-      const archivosJson = archivos ? JSON.stringify(archivos) : null
+      // ========== PROCESAR URLs DE ARCHIVOS (si vienen como string/array) ==========
+      let archivosPayload: any[] = []
+      if (archivosUrl) {
+        if (typeof archivosUrl === 'string') {
+          try {
+            archivosPayload = JSON.parse(archivosUrl)
+          } catch {
+            archivosPayload = [archivosUrl]
+          }
+        } else if (Array.isArray(archivosUrl)) {
+          archivosPayload = archivosUrl
+        }
+      }
 
+      // ========== SUBIR ARCHIVOS MULTIPART AL SERVIDOR ==========
+      const uploadedPayload: Array<{
+        originalName: string
+        fileName: string
+        extname: string
+        size: number
+        mimeType: string
+        url: string
+      }> = []
+
+      if (uploadedFiles.length > 0) {
+        // Crear entrega primero para tener el ID
+        if (!entrega) {
+          entrega = await Entrega.create({
+            asignacionId: Number(asignacionId),
+            estudianteId: Number(estudianteId),
+            acudienteId: acudiente.id,
+            evidenciaTexto: descripcion || null,
+            archivosUrl: null,
+            fechaEntrega: DateTime.now(),
+            estado: 'enviada',
+            institucionId: asignacion.institucionId,
+            nombreEnvio: nombreEnvio || `${acudiente.nombres} ${acudiente.apellidos}`,
+          })
+        }
+
+        const relativeFolder = `uploads/entregas/${entrega.id}`
+        const absoluteFolder = app.makePath('public', relativeFolder)
+        await mkdir(absoluteFolder, { recursive: true })
+
+        for (let i = 0; i < uploadedFiles.length; i++) {
+          const file = uploadedFiles[i]
+
+          if (!file.isValid) {
+            return response.status(400).json({
+              success: false,
+              message: 'Uno o más archivos no son válidos',
+              errors: file.errors,
+            })
+          }
+
+          const safeClientName = String(file.clientName || 'archivo')
+            .replace(/[^a-zA-Z0-9._-]/g, '_')
+            .slice(0, 80)
+
+          const name = `${Date.now()}_${i}_${safeClientName}`
+          await file.move(absoluteFolder, { name })
+
+          const url = `/${relativeFolder}/${name}`
+          uploadedPayload.push({
+            originalName: file.clientName,
+            fileName: name,
+            extname: file.extname || '',
+            size: file.size,
+            mimeType: file.type ? `${file.type}/${file.subtype || ''}`.replace(/\/$/, '') : '',
+            url,
+          })
+        }
+      }
+
+      // ========== COMBINAR ARCHIVOS ==========
+      const combined = [...archivosPayload, ...uploadedPayload]
+      const archivosJson = combined.length > 0 ? JSON.stringify(combined) : null
+
+      // ========== CREAR O ACTUALIZAR ENTREGA ==========
       if (entrega) {
         // Actualizar entrega existente
-        entrega.evidenciaTexto = descripcion || entrega.evidenciaTexto
-        entrega.archivosUrl = archivosJson || entrega.archivosUrl
+        if (descripcion) entrega.evidenciaTexto = descripcion
+        if (archivosJson) {
+          // Combinar archivos existentes con nuevos
+          const existentes = entrega.archivosUrl ? JSON.parse(entrega.archivosUrl) : []
+          const todos = [...existentes, ...combined]
+          entrega.archivosUrl = JSON.stringify(todos)
+        }
         entrega.fechaEntrega = DateTime.now()
+        if (nombreEnvio) entrega.nombreEnvio = nombreEnvio
         await entrega.save()
       } else {
         // Crear nueva entrega
@@ -1096,16 +1260,16 @@ export default class MovilController {
           asignacionId: Number(asignacionId),
           estudianteId: Number(estudianteId),
           acudienteId: acudiente.id,
-          evidenciaTexto: descripcion,
+          evidenciaTexto: descripcion || null,
           archivosUrl: archivosJson,
           fechaEntrega: DateTime.now(),
           estado: 'enviada',
           institucionId: asignacion.institucionId,
-          nombreEnvio: `${acudiente.nombres} ${acudiente.apellidos}`,
+          nombreEnvio: nombreEnvio || `${acudiente.nombres} ${acudiente.apellidos}`,
         })
       }
 
-      // Crear notificación para el docente
+      // ========== NOTIFICAR AL DOCENTE ==========
       if (asignacion.docenteId) {
         const docente = await db.from('docentes').where('id', asignacion.docenteId).first()
         if (docente) {
@@ -1122,6 +1286,12 @@ export default class MovilController {
         }
       }
 
+      // ========== DETERMINAR ESTADO ==========
+      let estadoEntrega = 'entregada'
+      if (asignacion.fechaVencimiento && DateTime.now() > asignacion.fechaVencimiento) {
+        estadoEntrega = 'entregada_tardia'
+      }
+
       return response.status(201).json({
         success: true,
         message: 'Evidencia enviada correctamente',
@@ -1130,7 +1300,8 @@ export default class MovilController {
           descripcion: entrega.evidenciaTexto,
           fechaEntrega: entrega.fechaEntrega?.toISO(),
           archivos: entrega.archivosUrl ? JSON.parse(entrega.archivosUrl) : [],
-          estado: 'entregada',
+          estado: estadoEntrega,
+          nombreEnvio: entrega.nombreEnvio,
         },
       })
     } catch (error) {
