@@ -1,9 +1,8 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Funcionario from '#models/funcionario'
-import Curso from '#models/curso'
-import Estudiante from '#models/estudiante'
 import Usuario from '#models/usuario'
 import Institucion from '#models/institucion'
+import db from '@adonisjs/lucid/services/db'
 
 export default class RectoresController {
   /**
@@ -35,72 +34,87 @@ export default class RectoresController {
 
       const institucionId = rector.institucionId
 
-      // Contar coordinadores (rolId: 3)
-      const coordinadores = await Funcionario.query()
-        .where('institucion_id', institucionId)
-        .whereHas('usuario', (query) => {
-          query.where('rol_id', 3)
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'Rector no tiene institución asignada',
         })
+      }
 
-      const coordinadoresActivos = await Funcionario.query()
-        .where('institucion_id', institucionId)
-        .whereHas('usuario', (query) => {
-          query.where('rol_id', 3).where('esta_activo', true)
-        })
+      // Contar coordinadores (rolId: 3) usando SQL directo
+      const coordinadoresResult = await db
+        .from('funcionarios as f')
+        .join('usuarios as u', 'f.usuario_id', 'u.id')
+        .where('f.institucion_id', institucionId)
+        .where('u.rol_id', 3)
+        .count('* as total')
+      
+      const coordinadoresActivosResult = await db
+        .from('funcionarios as f')
+        .join('usuarios as u', 'f.usuario_id', 'u.id')
+        .where('f.institucion_id', institucionId)
+        .where('u.rol_id', 3)
+        .where('u.esta_activo', true)
+        .count('* as total')
 
       // Contar orientadores (rolId: 4)
-      const orientadores = await Funcionario.query()
-        .where('institucion_id', institucionId)
-        .whereHas('usuario', (query) => {
-          query.where('rol_id', 4)
-        })
-
-      const orientadoresActivos = await Funcionario.query()
-        .where('institucion_id', institucionId)
-        .whereHas('usuario', (query) => {
-          query.where('rol_id', 4).where('esta_activo', true)
-        })
+      const orientadoresResult = await db
+        .from('funcionarios as f')
+        .join('usuarios as u', 'f.usuario_id', 'u.id')
+        .where('f.institucion_id', institucionId)
+        .where('u.rol_id', 4)
+        .count('* as total')
+      
+      const orientadoresActivosResult = await db
+        .from('funcionarios as f')
+        .join('usuarios as u', 'f.usuario_id', 'u.id')
+        .where('f.institucion_id', institucionId)
+        .where('u.rol_id', 4)
+        .where('u.esta_activo', true)
+        .count('* as total')
 
       // Contar docentes (rolId: 5)
-      const docentes = await Funcionario.query()
-        .where('institucion_id', institucionId)
-        .whereHas('usuario', (query) => {
-          query.where('rol_id', 5)
-        })
-
-      const docentesActivos = await Funcionario.query()
-        .where('institucion_id', institucionId)
-        .whereHas('usuario', (query) => {
-          query.where('rol_id', 5).where('esta_activo', true)
-        })
+      const docentesResult = await db
+        .from('funcionarios as f')
+        .join('usuarios as u', 'f.usuario_id', 'u.id')
+        .where('f.institucion_id', institucionId)
+        .where('u.rol_id', 5)
+        .count('* as total')
+      
+      const docentesActivosResult = await db
+        .from('funcionarios as f')
+        .join('usuarios as u', 'f.usuario_id', 'u.id')
+        .where('f.institucion_id', institucionId)
+        .where('u.rol_id', 5)
+        .where('u.esta_activo', true)
+        .count('* as total')
 
       // Contar cursos de la institución
-      const cursos = await Curso.query().where('institucion_id', institucionId)
+      const cursosResult = await db
+        .from('cursos')
+        .where('institucion_id', institucionId)
+        .count('* as total')
 
       // Contar estudiantes de todos los cursos de la institución
-      let totalEstudiantes = 0
-      for (const curso of cursos) {
-        const count = await Estudiante.query()
-          .whereHas('asignacionCurso', (query) => {
-            query.where('curso_id', curso.id)
-          })
-          .getCount()
-        totalEstudiantes += count
-      }
+      const estudiantesResult = await db
+        .from('estudiantes as e')
+        .join('cursos as c', 'e.curso_id', 'c.id')
+        .where('c.institucion_id', institucionId)
+        .count('* as total')
 
       return response.status(200).json({
         success: true,
         data: {
           institucionId,
           institucionNombre: rector.institucion?.nombre,
-          totalCoordinadores: coordinadores.length,
-          coordinadoresActivos: coordinadoresActivos.length,
-          totalOrientadores: orientadores.length,
-          orientadoresActivos: orientadoresActivos.length,
-          totalDocentes: docentes.length,
-          docentesActivos: docentesActivos.length,
-          totalCursos: cursos.length,
-          totalEstudiantes,
+          totalCoordinadores: Number(coordinadoresResult[0]?.total || 0),
+          coordinadoresActivos: Number(coordinadoresActivosResult[0]?.total || 0),
+          totalOrientadores: Number(orientadoresResult[0]?.total || 0),
+          orientadoresActivos: Number(orientadoresActivosResult[0]?.total || 0),
+          totalDocentes: Number(docentesResult[0]?.total || 0),
+          docentesActivos: Number(docentesActivosResult[0]?.total || 0),
+          totalCursos: Number(cursosResult[0]?.total || 0),
+          totalEstudiantes: Number(estudiantesResult[0]?.total || 0),
         },
       })
     } catch (error) {

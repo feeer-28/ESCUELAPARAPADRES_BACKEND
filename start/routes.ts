@@ -9,6 +9,7 @@ import './routes/roles.js'
 import './routes/acudiente.js'
 import './routes/estudiante.js'
 import './routes/docente.js'
+import './routes/orientador.js'
 import './routes/tareas.js'
 import './routes/asignaciones.js'
 import './routes/entregas.js'
@@ -19,6 +20,9 @@ import './routes/usuarios.js'
 import './routes/auth.js'
 import './routes/rectores.js'
 import './routes/coordinadores.js'
+import './routes/movil.js'
+import './routes/setup.js'
+import './routes/reportes.js'
 
 
 

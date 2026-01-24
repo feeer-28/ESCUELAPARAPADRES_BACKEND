@@ -91,9 +91,14 @@ export default class DocenteController {
       return response.badRequest({ message: 'cursoIds debe ser un arreglo de ids' })
     }
 
-    if (!correo || !contrasena || !telefono || !numeroDocumento) {
-      return response.badRequest({ message: 'correo, contrasena, telefono y numeroDocumento son requeridos' })
+    if (!correo || !telefono || !numeroDocumento) {
+      return response.badRequest({ message: 'correo, telefono y numeroDocumento son requeridos' })
     }
+
+    // Contraseña: usar la enviada o generar temporal
+    const passwordTemporal = `Docente${new Date().getFullYear()}!`
+    const passwordFinal = contrasena || passwordTemporal
+    const usaPasswordTemporal = !contrasena
 
     if (Array.isArray(cursoIds) && cursoIds.length) {
       const cursos = await Curso.query().whereIn('id', cursoIds)
@@ -131,9 +136,9 @@ export default class DocenteController {
       const usuario = await Usuario.create(
         {
           correo,
-          contrasenaHash: contrasena,
+          contrasenaHash: passwordFinal,
           estaActivo: true,
-          debeCambiarContrasena: true,
+          debeCambiarContrasena: usaPasswordTemporal, // Solo si usa temporal
           rolId: rolDocente.id,
         },
         { client: trx }
@@ -169,6 +174,8 @@ export default class DocenteController {
     return response.created({
       docente: result.docente,
       usuario: { id: result.usuario.id, correo: result.usuario.correo },
+      passwordTemporal: usaPasswordTemporal ? passwordFinal : undefined,
+      debeCambiarContrasena: usaPasswordTemporal,
     })
   }
 

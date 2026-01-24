@@ -1,7 +1,6 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Institucion from '#models/institucion'
 import Funcionario from '#models/funcionario'
-import Usuario from '#models/usuario'
 
 export default class InstitucionController {
   /**
@@ -25,7 +24,7 @@ export default class InstitucionController {
         naturaleza: inst.naturaleza,
         codigoDane: inst.codigoDane,
         nit: inst.nit,
-        activo: inst.estaActivo || true,
+        activo: true,
         municipioId: inst.municipioId,
         municipio: inst.municipio && {
           id: inst.municipio.id,
@@ -75,7 +74,7 @@ export default class InstitucionController {
           naturaleza: institucion.naturaleza,
           codigoDane: institucion.codigoDane,
           nit: institucion.nit,
-          activo: institucion.estaActivo || true,
+          activo: true,
           municipioId: institucion.municipioId,
           municipio: institucion.municipio && {
             id: institucion.municipio.id,

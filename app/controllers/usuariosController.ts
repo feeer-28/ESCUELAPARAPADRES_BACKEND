@@ -272,8 +272,6 @@ export default class UsuariosController {
             nombre: funcionario.nombre,
             apellido: funcionario.apellido,
             telefono: funcionario.telefono,
-            documento: funcionario.numeroDocumento,
-            tipoDocumento: funcionario.tipoDocumento,
             institucionId: funcionario.institucionId,
             institucion: funcionario.institucion && {
               id: funcionario.institucion.id,

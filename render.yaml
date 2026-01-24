@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: escuelaparapadres-backend
+    env: node
+    runtime: node
+    region: oregon
+    plan: free
+    branch: feature/mobile-functionality
+    buildCommand: npm ci --include=dev && node ace migration:run --force && npm run build
+    startCommand: cd build && npm ci --omit=dev && node bin/server.js
+    healthCheckPath: /api/movil/soporte/info
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_KEY
+        value: ZsSyLQ0bAilrP5mWD9rGaaHLogmkqO1l
+      - key: JWT_SECRET
+        value: c291702bdb4749589d66b58423fd8d3da86941638adc8fd75b1ec3ab9a6bd0a3
+      - key: LOG_LEVEL
+        value: info
+      - key: APP_NAME
+        value: ESCUELAPARAPADRES
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: DB_HOST
+        value: dpg-d5peb2n5c7fs73bkjkrg-a.oregon-postgres.render.com
+      - key: DB_PORT
+        value: 5432
+      - key: DB_USER
+        value: escuela_user
+      - key: DB_PASSWORD
+        value: zMUPjAcgXrgspof9bpxwVJMwHoX9SdBC
+      - key: DB_DATABASE
+        value: escuelaparapadres

@@ -141,7 +141,7 @@ export default class CoordinadoresController {
       const institucionId = coordinador.institucionId
 
       const cursos = await Curso.query()
-        .where('institucion_id', institucionId)
+        .where('institucion_id', institucionId!)
         .preload('grado')
         .orderBy('grado_id')
         .orderBy('nombre')
@@ -229,7 +229,7 @@ export default class CoordinadoresController {
       const alertas: any[] = []
 
       // Cursos con promedio bajo
-      const cursos = await Curso.query().where('institucion_id', institucionId).preload('grado')
+      const cursos = await Curso.query().where('institucion_id', institucionId!).preload('grado')
 
       for (const curso of cursos) {
         const promedioResult = await db
@@ -310,7 +310,7 @@ export default class CoordinadoresController {
       const docentes = await db
         .from('funcionarios as f')
         .leftJoin('usuarios as u', 'f.usuario_id', 'u.id')
-        .where('f.institucion_id', institucionId)
+        .where('f.institucion_id', institucionId!)
         .where('f.rol_id', 5)
         .select('f.id', 'f.nombre', 'f.apellido', 'u.correo')
 
@@ -383,7 +383,7 @@ export default class CoordinadoresController {
       const orientadores = await db
         .from('funcionarios as f')
         .leftJoin('usuarios as u', 'f.usuario_id', 'u.id')
-        .where('f.institucion_id', institucionId)
+        .where('f.institucion_id', institucionId!)
         .where('f.rol_id', 4)
         .select('f.id', 'f.nombre', 'f.apellido', 'u.correo')
 
@@ -442,7 +442,7 @@ export default class CoordinadoresController {
       // Verificar que el curso pertenece a la institución del coordinador
       const curso = await Curso.query()
         .where('id', cursoId)
-        .where('institucion_id', coordinador.institucionId)
+        .where('institucion_id', coordinador.institucionId!)
         .first()
 
       if (!curso) {

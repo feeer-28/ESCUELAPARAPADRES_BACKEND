@@ -1,5 +1,4 @@
 import db from '@adonisjs/lucid/services/db'
-import { defineConfig } from '@adonisjs/lucid'
 
 async function checkTableStructure() {
   try {
