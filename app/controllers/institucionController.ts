@@ -151,38 +151,281 @@ export default class InstitucionController {
   }
 
   async store({ request, response }: HttpContext) {
-    const payload = request.only([
-      'nombre',
-      'telefono',
-      'correo',
-      'direccion',
-      'naturaleza',
-      'municipioId',
-    ])
+    try {
+      const payload = request.only([
+        'nombre',
+        'telefono',
+        'correo',
+        'direccion',
+        'naturaleza',
+        'municipioId',
+        'codigoDane',
+        'nit',
+        'resolucionAprobacion',
+        'nivelesEducativos',
+        'modalidad',
+        'jornadas',
+        'telefonoPrincipal',
+        'telefonoSecretaria',
+        'correoInstitucional',
+        'correoRectoria',
+        'sitioWeb',
+        'direccionCompleta',
+        'barrio',
+        'estrato',
+        'coordenadasGps',
+        'capacidadEstudiantes',
+        'anoFundacion',
+        'enfoquePedagogico',
+        'confesional',
+        'religion',
+        'rectorNombre',
+        'rectorDocumento',
+        'rectorTelefono',
+        'rectorCorreo',
+      ])
 
-    const institucion = await Institucion.create(payload)
-    return response.created(institucion)
+      // Validar campos requeridos
+      if (!payload.nombre) {
+        return response.status(400).json({
+          success: false,
+          error: 'El nombre de la institución es requerido',
+        })
+      }
+
+      if (!payload.naturaleza) {
+        return response.status(400).json({
+          success: false,
+          error: 'La naturaleza de la institución es requerida',
+        })
+      }
+
+      if (!payload.municipioId) {
+        return response.status(400).json({
+          success: false,
+          error: 'El municipio es requerido',
+        })
+      }
+
+      // Validar que naturaleza sea válida
+      if (!['publica', 'privada'].includes(payload.naturaleza?.toLowerCase())) {
+        return response.status(400).json({
+          success: false,
+          error: 'La naturaleza debe ser "publica" o "privada"',
+        })
+      }
+
+      // Normalizar naturaleza
+      payload.naturaleza = payload.naturaleza.toLowerCase()
+
+      // Validar código DANE único (si se proporciona)
+      if (payload.codigoDane) {
+        const existente = await Institucion.query()
+          .where('codigo_dane', payload.codigoDane)
+          .first()
+        
+        if (existente) {
+          return response.status(409).json({
+            success: false,
+            error: 'Ya existe una institución con este código DANE',
+          })
+        }
+      }
+
+      // Validar NIT único (si se proporciona)
+      if (payload.nit) {
+        const existente = await Institucion.query()
+          .where('nit', payload.nit)
+          .first()
+        
+        if (existente) {
+          return response.status(409).json({
+            success: false,
+            error: 'Ya existe una institución con este NIT',
+          })
+        }
+      }
+
+      // Crear institución
+      const institucion = await Institucion.create(payload)
+
+      // Cargar relaciones para la respuesta
+      await institucion.load('municipio', (municipioQuery) => {
+        municipioQuery.preload('departamento')
+      })
+
+      return response.status(201).json({
+        success: true,
+        message: 'Institución creada exitosamente',
+        institucion: {
+          id: institucion.id,
+          nombre: institucion.nombre,
+          codigoDane: institucion.codigoDane,
+          nit: institucion.nit,
+          naturaleza: institucion.naturaleza,
+          telefono: institucion.telefono,
+          correo: institucion.correo,
+          direccion: institucion.direccion,
+          telefonoPrincipal: institucion.telefonoPrincipal,
+          correoInstitucional: institucion.correoInstitucional,
+          direccionCompleta: institucion.direccionCompleta,
+          rectorNombre: institucion.rectorNombre,
+          rectorDocumento: institucion.rectorDocumento,
+          rectorTelefono: institucion.rectorTelefono,
+          municipioId: institucion.municipioId,
+          municipio: institucion.municipio && {
+            id: institucion.municipio.id,
+            nombre: institucion.municipio.nombre,
+            departamento: institucion.municipio.departamento && {
+              id: institucion.municipio.departamento.id,
+              nombre: institucion.municipio.departamento.nombre,
+            },
+          },
+          creadoEn: institucion.creadoEn,
+        },
+      })
+    } catch (error) {
+      console.error('Error al crear institución:', error)
+      return response.status(500).json({
+        success: false,
+        error: 'Error al crear la institución',
+        details: error.message,
+      })
+    }
   }
 
   async update({ params, request, response }: HttpContext) {
-    const institucion = await Institucion.find(params.id)
-    if (!institucion) {
-      return response.notFound({ message: 'Institucion no encontrada' })
+    try {
+      const institucion = await Institucion.find(params.id)
+      if (!institucion) {
+        return response.status(404).json({
+          success: false,
+          error: 'Institución no encontrada',
+        })
+      }
+
+      const payload = request.only([
+        'nombre',
+        'telefono',
+        'correo',
+        'direccion',
+        'naturaleza',
+        'municipioId',
+        'codigoDane',
+        'nit',
+        'resolucionAprobacion',
+        'nivelesEducativos',
+        'modalidad',
+        'jornadas',
+        'telefonoPrincipal',
+        'telefonoSecretaria',
+        'correoInstitucional',
+        'correoRectoria',
+        'sitioWeb',
+        'direccionCompleta',
+        'barrio',
+        'estrato',
+        'coordenadasGps',
+        'capacidadEstudiantes',
+        'anoFundacion',
+        'enfoquePedagogico',
+        'confesional',
+        'religion',
+        'rectorNombre',
+        'rectorDocumento',
+        'rectorTelefono',
+        'rectorCorreo',
+      ])
+
+      // Validar naturaleza si se proporciona
+      if (payload.naturaleza && !['publica', 'privada'].includes(payload.naturaleza?.toLowerCase())) {
+        return response.status(400).json({
+          success: false,
+          error: 'La naturaleza debe ser "publica" o "privada"',
+        })
+      }
+
+      // Normalizar naturaleza
+      if (payload.naturaleza) {
+        payload.naturaleza = payload.naturaleza.toLowerCase()
+      }
+
+      // Validar código DANE único (si se cambia)
+      if (payload.codigoDane && payload.codigoDane !== institucion.codigoDane) {
+        const existente = await Institucion.query()
+          .where('codigo_dane', payload.codigoDane)
+          .whereNot('id', institucion.id)
+          .first()
+        
+        if (existente) {
+          return response.status(409).json({
+            success: false,
+            error: 'Ya existe una institución con este código DANE',
+          })
+        }
+      }
+
+      // Validar NIT único (si se cambia)
+      if (payload.nit && payload.nit !== institucion.nit) {
+        const existente = await Institucion.query()
+          .where('nit', payload.nit)
+          .whereNot('id', institucion.id)
+          .first()
+        
+        if (existente) {
+          return response.status(409).json({
+            success: false,
+            error: 'Ya existe una institución con este NIT',
+          })
+        }
+      }
+
+      institucion.merge(payload)
+      await institucion.save()
+
+      // Cargar relaciones para la respuesta
+      await institucion.load('municipio', (municipioQuery) => {
+        municipioQuery.preload('departamento')
+      })
+
+      return response.status(200).json({
+        success: true,
+        message: 'Institución actualizada exitosamente',
+        institucion: {
+          id: institucion.id,
+          nombre: institucion.nombre,
+          codigoDane: institucion.codigoDane,
+          nit: institucion.nit,
+          naturaleza: institucion.naturaleza,
+          telefono: institucion.telefono,
+          correo: institucion.correo,
+          direccion: institucion.direccion,
+          telefonoPrincipal: institucion.telefonoPrincipal,
+          correoInstitucional: institucion.correoInstitucional,
+          direccionCompleta: institucion.direccionCompleta,
+          rectorNombre: institucion.rectorNombre,
+          rectorDocumento: institucion.rectorDocumento,
+          rectorTelefono: institucion.rectorTelefono,
+          municipioId: institucion.municipioId,
+          municipio: institucion.municipio && {
+            id: institucion.municipio.id,
+            nombre: institucion.municipio.nombre,
+            departamento: institucion.municipio.departamento && {
+              id: institucion.municipio.departamento.id,
+              nombre: institucion.municipio.departamento.nombre,
+            },
+          },
+          actualizadoEn: institucion.actualizadoEn,
+        },
+      })
+    } catch (error) {
+      console.error('Error al actualizar institución:', error)
+      return response.status(500).json({
+        success: false,
+        error: 'Error al actualizar la institución',
+        details: error.message,
+      })
     }
-
-    const payload = request.only([
-      'nombre',
-      'telefono',
-      'correo',
-      'direccion',
-      'naturaleza',
-      'municipioId',
-    ])
-
-    institucion.merge(payload)
-    await institucion.save()
-
-    return response.ok(institucion)
   }
 
   async destroy({ params, response }: HttpContext) {

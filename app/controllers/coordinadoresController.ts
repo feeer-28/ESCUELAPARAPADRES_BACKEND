@@ -1,6 +1,9 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Funcionario from '#models/funcionario'
 import Curso from '#models/curso'
+import Usuario from '#models/usuario'
+import Institucion from '#models/institucion'
+import Periodo from '#models/periodo'
 import db from '@adonisjs/lucid/services/db'
 
 export default class CoordinadoresController {
@@ -283,6 +286,115 @@ export default class CoordinadoresController {
   }
 
   /**
+   * Personal completo (docentes + orientadores) con métricas
+   * GET /coordinadores/personal
+   */
+  async personal({ response, jwtUser }: HttpContext) {
+    try {
+      const coordinador = await Funcionario.query().where('usuario_id', jwtUser!.id).first()
+
+      if (!coordinador) {
+        return response.status(404).json({
+          success: false,
+          message: 'Coordinador no encontrado',
+        })
+      }
+
+      const institucionId = coordinador.institucionId
+
+      // Obtener docentes y orientadores en una sola consulta
+      const personal = await db
+        .from('funcionarios as f')
+        .leftJoin('usuarios as u', 'f.usuario_id', 'u.id')
+        .leftJoin('roles as r', 'f.rol_id', 'r.id')
+        .where('f.institucion_id', institucionId!)
+        .whereIn('f.rol_id', [4, 5]) // 4: orientador, 5: docente
+        .select(
+          'f.id',
+          'f.nombre',
+          'f.apellido',
+          'f.rol_id',
+          'u.correo',
+          'u.esta_activo',
+          'r.nombre as rol_nombre'
+        )
+        .orderBy('f.rol_id')
+        .orderBy('f.nombre')
+
+      const personalConMetricas = await Promise.all(
+        personal.map(async (persona) => {
+          const esDocente = persona.rol_id === 5
+
+          if (esDocente) {
+            // Buscar si existe en la tabla docentes
+            const docenteInfo = await db
+              .from('docentes')
+              .where('usuario_id', persona.id)
+              .first()
+
+            let tareasCreadas = 0
+            if (docenteInfo) {
+              const tareasResult = await db
+                .from('asignaciones')
+                .where('docente_id', docenteInfo.id)
+                .count('* as total')
+              tareasCreadas = Number(tareasResult[0]?.total || 0)
+            }
+
+            return {
+              id: persona.id,
+              nombre: persona.nombre,
+              apellido: persona.apellido,
+              correo: persona.correo,
+              tipo: 'docente',
+              rolNombre: persona.rol_nombre,
+              estaActivo: persona.esta_activo,
+              tienePerfilCompleto: !!docenteInfo,
+              metricas: {
+                tareasCreadas,
+              },
+            }
+          } else {
+            // Métricas de orientador (por ahora básicas)
+            return {
+              id: persona.id,
+              nombre: persona.nombre,
+              apellido: persona.apellido,
+              correo: persona.correo,
+              tipo: 'orientador',
+              rolNombre: persona.rol_nombre,
+              estaActivo: persona.esta_activo,
+              metricas: {
+                casosAcompanamiento: 0,
+              },
+            }
+          }
+        })
+      )
+
+      // Resumen por tipo
+      const resumen = {
+        totalDocentes: personalConMetricas.filter((p) => p.tipo === 'docente').length,
+        totalOrientadores: personalConMetricas.filter((p) => p.tipo === 'orientador').length,
+        totalActivos: personalConMetricas.filter((p) => p.estaActivo).length,
+      }
+
+      return response.status(200).json({
+        success: true,
+        data: personalConMetricas,
+        resumen,
+      })
+    } catch (error) {
+      console.error('Error al obtener personal:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al obtener personal',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
    * Docentes con seguimiento académico
    * GET /coordinadores/docentes
    */
@@ -516,6 +628,310 @@ export default class CoordinadoresController {
       return response.status(500).json({
         success: false,
         message: 'Error al obtener rendimiento',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Crear docente en la institución del coordinador
+   * POST /coordinadores/docentes
+   */
+  async crearDocente({ request, response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del coordinador
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      const { correo, contrasena, nombre, apellido, telefono } = request.only([
+        'correo',
+        'contrasena',
+        'nombre',
+        'apellido',
+        'telefono',
+      ])
+
+      // Validar campos requeridos
+      if (!correo || !contrasena || !nombre || !apellido) {
+        return response.status(400).json({
+          success: false,
+          message: 'Los campos correo, contraseña, nombre y apellido son requeridos',
+        })
+      }
+
+      // Validar formato de correo
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(correo)) {
+        return response.status(400).json({
+          success: false,
+          message: 'El formato del correo es inválido',
+        })
+      }
+
+      // Validar formato de contraseña
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/
+      if (!passwordRegex.test(contrasena)) {
+        return response.status(400).json({
+          success: false,
+          message:
+            'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial (@$!%*?&)',
+        })
+      }
+
+      // Verificar que el correo no esté registrado
+      const existeCorreo = await Usuario.findBy('correo', correo)
+      if (existeCorreo) {
+        return response.status(400).json({
+          success: false,
+          message: 'El correo ya está registrado en el sistema',
+        })
+      }
+
+      // Crear usuario con rol de docente (rolId = 5)
+      const usuario = await Usuario.create({
+        correo,
+        contrasenaHash: contrasena,
+        rolId: 5, // docente
+        estaActivo: true,
+        debeCambiarContrasena: true,
+      })
+
+      // Crear funcionario (docente) en la institución del coordinador
+      const docente = await Funcionario.create({
+        nombre,
+        apellido,
+        telefono: telefono || null,
+        institucionId,
+        usuarioId: usuario.id,
+        rolId: 5,
+      })
+
+      return response.status(201).json({
+        success: true,
+        message: 'Docente creado exitosamente',
+        data: {
+          usuario: {
+            id: usuario.id,
+            correo: usuario.correo,
+            rolId: usuario.rolId,
+            debeCambiarContrasena: usuario.debeCambiarContrasena,
+          },
+          docente: {
+            id: docente.id,
+            nombre: docente.nombre,
+            apellido: docente.apellido,
+            telefono: docente.telefono,
+            institucionId: docente.institucionId,
+          },
+        },
+      })
+    } catch (error) {
+      console.error('Error al crear docente:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al crear docente',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Crear orientador en la institución del coordinador
+   * POST /coordinadores/orientadores
+   */
+  async crearOrientador({ request, response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del coordinador
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      const { correo, contrasena, nombre, apellido, telefono } = request.only([
+        'correo',
+        'contrasena',
+        'nombre',
+        'apellido',
+        'telefono',
+      ])
+
+      // Validar campos requeridos
+      if (!correo || !contrasena || !nombre || !apellido) {
+        return response.status(400).json({
+          success: false,
+          message: 'Los campos correo, contraseña, nombre y apellido son requeridos',
+        })
+      }
+
+      // Validar formato de correo
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(correo)) {
+        return response.status(400).json({
+          success: false,
+          message: 'El formato del correo es inválido',
+        })
+      }
+
+      // Validar formato de contraseña
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/
+      if (!passwordRegex.test(contrasena)) {
+        return response.status(400).json({
+          success: false,
+          message:
+            'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial (@$!%*?&)',
+        })
+      }
+
+      // Verificar que el correo no esté registrado
+      const existeCorreo = await Usuario.findBy('correo', correo)
+      if (existeCorreo) {
+        return response.status(400).json({
+          success: false,
+          message: 'El correo ya está registrado en el sistema',
+        })
+      }
+
+      // Crear usuario con rol de orientador (rolId = 4)
+      const usuario = await Usuario.create({
+        correo,
+        contrasenaHash: contrasena,
+        rolId: 4, // orientador
+        estaActivo: true,
+        debeCambiarContrasena: true,
+      })
+
+      // Crear funcionario (orientador) en la institución del coordinador
+      const orientador = await Funcionario.create({
+        nombre,
+        apellido,
+        telefono: telefono || null,
+        institucionId,
+        usuarioId: usuario.id,
+        rolId: 4,
+      })
+
+      return response.status(201).json({
+        success: true,
+        message: 'Orientador creado exitosamente',
+        data: {
+          usuario: {
+            id: usuario.id,
+            correo: usuario.correo,
+            rolId: usuario.rolId,
+            debeCambiarContrasena: usuario.debeCambiarContrasena,
+          },
+          orientador: {
+            id: orientador.id,
+            nombre: orientador.nombre,
+            apellido: orientador.apellido,
+            telefono: orientador.telefono,
+            institucionId: orientador.institucionId,
+          },
+        },
+      })
+    } catch (error) {
+      console.error('Error al crear orientador:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al crear orientador',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Ver datos de la institución del coordinador
+   * GET /coordinadores/mi-institucion
+   */
+  async miInstitucion({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del coordinador
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .preload('institucion', (query) => {
+          query.preload('municipio', (municipioQuery) => {
+            municipioQuery.preload('departamento')
+          })
+        })
+        .firstOrFail()
+
+      const institucion = coordinador.institucion
+
+      if (!institucion) {
+        return response.status(404).json({
+          success: false,
+          message: 'Institución no encontrada',
+        })
+      }
+
+      return response.status(200).json({
+        success: true,
+        data: {
+          id: institucion.id,
+          nombre: institucion.nombre,
+          telefono: institucion.telefono,
+          correo: institucion.correo,
+          direccion: institucion.direccion,
+          codigoDane: institucion.codigoDane,
+          nit: institucion.nit,
+          municipioId: institucion.municipioId,
+          municipio: institucion.municipio?.nombre,
+          departamento: institucion.municipio?.departamento?.nombre,
+          rectorNombre: institucion.rectorNombre,
+          rectorDocumento: institucion.rectorDocumento,
+          rectorCorreo: institucion.rectorCorreo,
+          rectorTelefono: institucion.rectorTelefono,
+        },
+      })
+    } catch (error) {
+      console.error('Error al obtener institución:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al obtener institución',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Listar períodos académicos de la institución del coordinador
+   * GET /coordinadores/periodos
+   */
+  async listarPeriodos({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del coordinador
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      // Obtener períodos de la institución
+      const periodos = await Periodo.query()
+        .where('institucion_id', institucionId!)
+        .orderBy('fecha_inicio', 'desc')
+
+      return response.status(200).json({
+        success: true,
+        data: periodos.map((periodo) => ({
+          id: periodo.id,
+          nombre: periodo.nombre,
+          fechaInicio: periodo.fechaInicio.toFormat('yyyy-MM-dd'),
+          fechaFin: periodo.fechaFin.toFormat('yyyy-MM-dd'),
+          estaActivo: periodo.estaActivo,
+          institucionId: periodo.institucionId,
+        })),
+        total: periodos.length,
+      })
+    } catch (error) {
+      console.error('Error al listar períodos:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar períodos',
         error: error.message,
       })
     }
