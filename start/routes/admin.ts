@@ -9,13 +9,28 @@ router.post('/admin/login', [AdminSistemaController, 'login'])
 // Rutas protegidas con JWT + admin_sistema middleware
 router
   .group(() => {
-    // Gestión de rectores
+    // === GESTIÓN DE USUARIOS ===
+    // Crear usuario genérico (cualquier rol)
+    router.post('/admin/usuarios', [AdminSistemaController, 'crearUsuario'])
+    // Listar todos los usuarios
+    router.get('/admin/usuarios', [AdminSistemaController, 'listarUsuarios'])
+    // Activar usuario
+    router.put('/admin/usuarios/:id/activar', [AdminSistemaController, 'activarUsuario'])
+    // Desactivar usuario (soft delete)
+    router.put('/admin/usuarios/:id/desactivar', [AdminSistemaController, 'desactivarUsuario'])
+    // Eliminar usuario permanentemente (hard delete)
+    router.delete('/admin/usuarios/:id', [AdminSistemaController, 'eliminarUsuario'])
+
+    // === GESTIÓN DE RECTORES ===
     router.post('/admin/rectores', [AdminSistemaController, 'crearRector'])
 
-    // Gestión de coordinadores
+    // === GESTIÓN DE COORDINADORES ===
     router.post('/admin/coordinadores', [AdminSistemaController, 'crearCoordinador'])
 
-    // Gestión de instituciones
+    // === GESTIÓN DE ORIENTADORES ===
+    router.post('/admin/orientadores', [AdminSistemaController, 'crearOrientador'])
+
+    // === GESTIÓN DE INSTITUCIONES ===
     router.get('/admin/instituciones/pendientes', [
       AdminSistemaController,
       'listarInstitucionesPendientes',
@@ -24,5 +39,8 @@ router
       AdminSistemaController,
       'aprobarInstitucion',
     ])
+
+    // === ESTADÍSTICAS GLOBALES ===
+    router.get('/admin/estadisticas', [AdminSistemaController, 'estadisticasGlobales'])
   })
   .use([middleware.jwt(), middleware.adminSistema()])

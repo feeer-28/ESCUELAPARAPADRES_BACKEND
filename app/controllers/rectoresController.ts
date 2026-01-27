@@ -2,6 +2,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 import Funcionario from '#models/funcionario'
 import Usuario from '#models/usuario'
 import Institucion from '#models/institucion'
+import Periodo from '#models/periodo'
 import db from '@adonisjs/lucid/services/db'
 
 export default class RectoresController {
@@ -256,6 +257,532 @@ export default class RectoresController {
       return response.status(500).json({
         success: false,
         message: 'Error al crear coordinador',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Listar coordinadores de la institución del rector
+   * GET /rectores/coordinadores
+   */
+  async listarCoordinadores({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = rector.institucionId
+
+      // Obtener coordinadores de la institución
+      const coordinadores = await Funcionario.query()
+        .where('institucion_id', institucionId)
+        .where('rol_id', 3) // coordinador
+        .preload('usuario', (query) => {
+          query.preload('rol')
+        })
+        .preload('institucion')
+
+      const coordinadoresFormateados = coordinadores.map((coord) => ({
+        id: coord.id,
+        nombre: coord.nombre,
+        apellido: coord.apellido,
+        telefono: coord.telefono,
+        usuarioId: coord.usuarioId,
+        correo: coord.usuario?.correo,
+        estaActivo: coord.usuario?.estaActivo,
+        institucionId: coord.institucionId,
+        institucion: coord.institucion?.nombre,
+      }))
+
+      return response.status(200).json({
+        success: true,
+        data: coordinadoresFormateados,
+        total: coordinadoresFormateados.length,
+      })
+    } catch (error) {
+      console.error('Error al listar coordinadores:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar coordinadores',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Listar orientadores de la institución del rector
+   * GET /rectores/orientadores
+   */
+  async listarOrientadores({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = rector.institucionId
+
+      // Obtener orientadores de la institución
+      const orientadores = await Funcionario.query()
+        .where('institucion_id', institucionId)
+        .where('rol_id', 4) // orientador
+        .preload('usuario', (query) => {
+          query.preload('rol')
+        })
+        .preload('institucion')
+
+      const orientadoresFormateados = orientadores.map((orient) => ({
+        id: orient.id,
+        nombre: orient.nombre,
+        apellido: orient.apellido,
+        telefono: orient.telefono,
+        usuarioId: orient.usuarioId,
+        correo: orient.usuario?.correo,
+        estaActivo: orient.usuario?.estaActivo,
+        institucionId: orient.institucionId,
+        institucion: orient.institucion?.nombre,
+      }))
+
+      return response.status(200).json({
+        success: true,
+        data: orientadoresFormateados,
+        total: orientadoresFormateados.length,
+      })
+    } catch (error) {
+      console.error('Error al listar orientadores:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar orientadores',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Listar docentes de la institución del rector
+   * GET /rectores/docentes
+   */
+  async listarDocentes({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = rector.institucionId
+
+      // Obtener docentes de la institución (usando tabla docentes)
+      const docentes = await db
+        .from('docentes as d')
+        .leftJoin('usuarios as u', 'd.usuario_id', 'u.id')
+        .where('d.institucion_id', institucionId)
+        .select(
+          'd.id',
+          'd.nombres as nombre',
+          'd.apellidos as apellido',
+          'd.telefono',
+          'd.numero_documento as documento',
+          'd.usuario_id as usuarioId',
+          'u.correo',
+          'u.esta_activo as estaActivo'
+        )
+
+      return response.status(200).json({
+        success: true,
+        data: docentes,
+        total: docentes.length,
+      })
+    } catch (error) {
+      console.error('Error al listar docentes:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar docentes',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Listar cursos de la institución del rector
+   * GET /rectores/cursos
+   */
+  async listarCursos({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = rector.institucionId
+
+      // Obtener cursos de la institución
+      const cursos = await db
+        .from('cursos as c')
+        .leftJoin('grados as g', 'c.grado_id', 'g.id')
+        .where('c.institucion_id', institucionId)
+        .select(
+          'c.id',
+          'c.nombre',
+          'c.jornada',
+          'c.grado_id as gradoId',
+          'g.nombre as gradoNombre'
+        )
+        .orderBy('g.nombre', 'asc')
+        .orderBy('c.nombre', 'asc')
+
+      // Contar estudiantes por curso
+      const cursosConEstudiantes = await Promise.all(
+        cursos.map(async (curso) => {
+          const estudiantesCount = await db
+            .from('estudiantes')
+            .where('curso_id', curso.id)
+            .count('* as total')
+
+          return {
+            ...curso,
+            totalEstudiantes: Number(estudiantesCount[0]?.total || 0),
+          }
+        })
+      )
+
+      return response.status(200).json({
+        success: true,
+        data: cursosConEstudiantes,
+        total: cursosConEstudiantes.length,
+      })
+    } catch (error) {
+      console.error('Error al listar cursos:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar cursos',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Ver datos de la institución del rector
+   * GET /rectores/mi-institucion
+   */
+  async miInstitucion({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .preload('institucion', (query) => {
+          query.preload('municipio', (municipioQuery) => {
+            municipioQuery.preload('departamento')
+          })
+        })
+        .firstOrFail()
+
+      const institucion = rector.institucion
+
+      if (!institucion) {
+        return response.status(404).json({
+          success: false,
+          message: 'Institución no encontrada',
+        })
+      }
+
+      return response.status(200).json({
+        success: true,
+        data: {
+          id: institucion.id,
+          nombre: institucion.nombre,
+          telefono: institucion.telefono,
+          correo: institucion.correo,
+          direccion: institucion.direccion,
+          codigoDane: institucion.codigoDane,
+          nit: institucion.nit,
+          municipioId: institucion.municipioId,
+          municipio: institucion.municipio?.nombre,
+          departamento: institucion.municipio?.departamento?.nombre,
+          rectorNombre: institucion.rectorNombre,
+          rectorDocumento: institucion.rectorDocumento,
+          rectorCorreo: institucion.rectorCorreo,
+          rectorTelefono: institucion.rectorTelefono,
+        },
+      })
+    } catch (error) {
+      console.error('Error al obtener institución:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al obtener institución',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Actualizar datos de la institución del rector
+   * PUT /rectores/mi-institucion
+   * Solo puede editar: teléfono, correo, dirección, datos del rector
+   */
+  async actualizarMiInstitucion({ request, response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucion = await Institucion.findOrFail(rector.institucionId)
+
+      // Campos que el rector puede editar
+      const {
+        telefono,
+        correo,
+        direccion,
+        rectorNombre,
+        rectorDocumento,
+        rectorCorreo,
+        rectorTelefono,
+      } = request.only([
+        'telefono',
+        'correo',
+        'direccion',
+        'rectorNombre',
+        'rectorDocumento',
+        'rectorCorreo',
+        'rectorTelefono',
+      ])
+
+      // Actualizar solo los campos permitidos
+      if (telefono !== undefined) institucion.telefono = telefono
+      if (correo !== undefined) institucion.correo = correo
+      if (direccion !== undefined) institucion.direccion = direccion
+      if (rectorNombre !== undefined) institucion.rectorNombre = rectorNombre
+      if (rectorDocumento !== undefined) institucion.rectorDocumento = rectorDocumento
+      if (rectorCorreo !== undefined) institucion.rectorCorreo = rectorCorreo
+      if (rectorTelefono !== undefined) institucion.rectorTelefono = rectorTelefono
+
+      await institucion.save()
+
+      return response.status(200).json({
+        success: true,
+        message: 'Institución actualizada exitosamente',
+        data: {
+          id: institucion.id,
+          nombre: institucion.nombre,
+          telefono: institucion.telefono,
+          correo: institucion.correo,
+          direccion: institucion.direccion,
+          rectorNombre: institucion.rectorNombre,
+          rectorDocumento: institucion.rectorDocumento,
+          rectorCorreo: institucion.rectorCorreo,
+          rectorTelefono: institucion.rectorTelefono,
+        },
+      })
+    } catch (error) {
+      console.error('Error al actualizar institución:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al actualizar institución',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Listar períodos académicos de la institución del rector
+   * GET /rectores/periodos
+   */
+  async listarPeriodos({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = rector.institucionId
+
+      // Obtener períodos de la institución
+      const periodos = await Periodo.query()
+        .where('institucion_id', institucionId)
+        .orderBy('fecha_inicio', 'desc')
+
+      return response.status(200).json({
+        success: true,
+        data: periodos.map((periodo) => ({
+          id: periodo.id,
+          nombre: periodo.nombre,
+          fechaInicio: periodo.fechaInicio.toFormat('yyyy-MM-dd'),
+          fechaFin: periodo.fechaFin.toFormat('yyyy-MM-dd'),
+          estaActivo: periodo.estaActivo,
+          institucionId: periodo.institucionId,
+        })),
+        total: periodos.length,
+      })
+    } catch (error) {
+      console.error('Error al listar períodos:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar períodos',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Crear período académico en la institución del rector
+   * POST /rectores/periodos
+   */
+  async crearPeriodo({ request, response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = rector.institucionId
+
+      const { nombre, fechaInicio, fechaFin, estaActivo } = request.only([
+        'nombre',
+        'fechaInicio',
+        'fechaFin',
+        'estaActivo',
+      ])
+
+      // Validar campos requeridos
+      if (!nombre || !fechaInicio || !fechaFin) {
+        return response.status(400).json({
+          success: false,
+          message: 'Los campos nombre, fechaInicio y fechaFin son requeridos',
+        })
+      }
+
+      // Crear período
+      const periodo = await Periodo.create({
+        nombre,
+        fechaInicio,
+        fechaFin,
+        institucionId,
+        estaActivo: estaActivo !== undefined ? estaActivo : true,
+      })
+
+      // Recargar para obtener las fechas como DateTime
+      await periodo.refresh()
+
+      return response.status(201).json({
+        success: true,
+        message: 'Período creado exitosamente',
+        data: {
+          id: periodo.id,
+          nombre: periodo.nombre,
+          fechaInicio: periodo.fechaInicio.toFormat('yyyy-MM-dd'),
+          fechaFin: periodo.fechaFin.toFormat('yyyy-MM-dd'),
+          estaActivo: periodo.estaActivo,
+          institucionId: periodo.institucionId,
+        },
+      })
+    } catch (error) {
+      console.error('Error al crear período:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al crear período',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Actualizar período académico de la institución del rector
+   * PUT /rectores/periodos/:id
+   */
+  async actualizarPeriodo({ params, request, response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = rector.institucionId
+
+      // Buscar el período y verificar que pertenece a su institución
+      const periodo = await Periodo.query()
+        .where('id', params.id)
+        .where('institucion_id', institucionId)
+        .firstOrFail()
+
+      const { nombre, fechaInicio, fechaFin, estaActivo } = request.only([
+        'nombre',
+        'fechaInicio',
+        'fechaFin',
+        'estaActivo',
+      ])
+
+      // Actualizar campos
+      if (nombre !== undefined) periodo.nombre = nombre
+      if (fechaInicio !== undefined) periodo.fechaInicio = fechaInicio
+      if (fechaFin !== undefined) periodo.fechaFin = fechaFin
+      if (estaActivo !== undefined) periodo.estaActivo = estaActivo
+
+      await periodo.save()
+
+      return response.status(200).json({
+        success: true,
+        message: 'Período actualizado exitosamente',
+        data: {
+          id: periodo.id,
+          nombre: periodo.nombre,
+          fechaInicio: periodo.fechaInicio.toFormat('yyyy-MM-dd'),
+          fechaFin: periodo.fechaFin.toFormat('yyyy-MM-dd'),
+          estaActivo: periodo.estaActivo,
+          institucionId: periodo.institucionId,
+        },
+      })
+    } catch (error) {
+      console.error('Error al actualizar período:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al actualizar período',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Eliminar período académico de la institución del rector
+   * DELETE /rectores/periodos/:id
+   */
+  async eliminarPeriodo({ params, response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del rector
+      const rector = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = rector.institucionId
+
+      // Buscar el período y verificar que pertenece a su institución
+      const periodo = await Periodo.query()
+        .where('id', params.id)
+        .where('institucion_id', institucionId)
+        .firstOrFail()
+
+      await periodo.delete()
+
+      return response.status(200).json({
+        success: true,
+        message: 'Período eliminado exitosamente',
+      })
+    } catch (error) {
+      console.error('Error al eliminar período:', error)
+      
+      // Manejar error de restricción de clave foránea
+      if (error.code === '23503') {
+        return response.status(409).json({
+          success: false,
+          message: 'No se puede eliminar el período porque tiene asignaciones o calificaciones asociadas',
+          error: 'FOREIGN_KEY_CONSTRAINT',
+        })
+      }
+
+      return response.status(500).json({
+        success: false,
+        message: 'Error al eliminar período',
         error: error.message,
       })
     }
