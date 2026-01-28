@@ -5,11 +5,50 @@ import jwt from 'jsonwebtoken'
 
 import Acudiente from '#models/acudiente'
 import Asignacion from '#models/asignacion'
+import Docente from '#models/docente'
 import Role from '#models/role'
 import Usuario from '#models/usuario'
 import env from '#start/env'
+import db from '@adonisjs/lucid/services/db'
 
 export default class AcudienteController {
+  private async getDocenteCursoIds(usuario: Usuario): Promise<number[] | null> {
+    const rol = await Role.find(usuario.rolId)
+    const nombreRol = (rol?.nombre ?? '').toLowerCase()
+    if (nombreRol !== 'docente') {
+      return null
+    }
+
+    const docente = await Docente.query().where('usuario_id', usuario.id).first()
+    if (!docente) {
+      return []
+    }
+
+    const rows = await db.from('docente_curso').where('docente_id', docente.id).select('curso_id')
+    const cursoIds = rows.map((r) => Number(r.curso_id)).filter((id) => !Number.isNaN(id))
+    return [...new Set(cursoIds)]
+  }
+
+  private async docentePuedeAccederAcudiente(usuario: Usuario, acudienteId: number): Promise<boolean> {
+    const cursoIds = await this.getDocenteCursoIds(usuario)
+    if (!Array.isArray(cursoIds)) {
+      return true
+    }
+
+    if (!cursoIds.length) {
+      return false
+    }
+
+    const row = await db
+      .from('estudiante_acudiente as ea')
+      .join('estudiantes', 'ea.estudiante_id', 'estudiantes.id')
+      .where('ea.acudiente_id', acudienteId)
+      .whereIn('estudiantes.curso_id', cursoIds)
+      .first()
+
+    return Boolean(row)
+  }
+
   async misTareas(ctx: HttpContext) {
     const { response } = ctx
     const usuario = (ctx as any).jwtUser as Usuario | undefined
@@ -233,11 +272,46 @@ export default class AcudienteController {
   }
 
   async index({ response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    if (!usuario) {
+      const acudientes = await Acudiente.query().orderBy('id', 'desc')
+      return response.ok(acudientes)
+    }
+
+    const cursoIds = await this.getDocenteCursoIds(usuario)
+    if (Array.isArray(cursoIds)) {
+      if (!cursoIds.length) {
+        return response.ok([])
+      }
+
+      const acudientes = await db
+        .from('acudientes')
+        .join('estudiante_acudiente as ea', 'acudientes.id', 'ea.acudiente_id')
+        .join('estudiantes', 'ea.estudiante_id', 'estudiantes.id')
+        .whereIn('estudiantes.curso_id', cursoIds)
+        .distinct('acudientes.*')
+        .orderBy('acudientes.id', 'desc')
+
+      return response.ok(acudientes)
+    }
+
     const acudientes = await Acudiente.query().orderBy('id', 'desc')
     return response.ok(acudientes)
   }
 
   async show({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    if (usuario) {
+      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
+      if (!ok) {
+        return response.forbidden({ message: 'Acceso denegado' })
+      }
+    }
+
     const acudiente = await Acudiente.find(params.id)
     if (!acudiente) {
       return response.notFound({ message: 'Acudiente no encontrado' })
@@ -325,6 +399,16 @@ export default class AcudienteController {
   }
 
   async update({ params, request, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    if (usuario) {
+      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
+      if (!ok) {
+        return response.forbidden({ message: 'Acceso denegado' })
+      }
+    }
+
     const acudiente = await Acudiente.find(params.id)
     if (!acudiente) {
       return response.notFound({ message: 'Acudiente no encontrado' })
@@ -354,6 +438,16 @@ export default class AcudienteController {
   }
 
   async destroy({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    if (usuario) {
+      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
+      if (!ok) {
+        return response.forbidden({ message: 'Acceso denegado' })
+      }
+    }
+
     const acudiente = await Acudiente.find(params.id)
     if (!acudiente) {
       return response.notFound({ message: 'Acudiente no encontrado' })
