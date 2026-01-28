@@ -6,19 +6,62 @@ import { readFile } from 'node:fs/promises'
 
 import Acudiente from '#models/acudiente'
 import Curso from '#models/curso'
+import Docente from '#models/docente'
 import Estudiante from '#models/estudiante'
 import ExcelUploadService from '#services/excel_upload_service'
+import Role from '#models/role'
+import Usuario from '#models/usuario'
 
 export default class EstudianteController {
+  private async getDocenteCursoIds(usuario: Usuario): Promise<number[] | null> {
+    const rol = await Role.find(usuario.rolId)
+    const nombreRol = (rol?.nombre ?? '').toLowerCase()
+    if (nombreRol !== 'docente') {
+      return null
+    }
+
+    const docente = await Docente.query().where('usuario_id', usuario.id).first()
+    if (!docente) {
+      return []
+    }
+
+    const rows = await db.from('docente_curso').where('docente_id', docente.id).select('curso_id')
+    const cursoIds = rows.map((r) => Number(r.curso_id)).filter((id) => !Number.isNaN(id))
+    return [...new Set(cursoIds)]
+  }
+
   async index({ response }: HttpContext) {
-    const estudiantes = await Estudiante.query().orderBy('id', 'desc')
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    const cursoIds = usuario ? await this.getDocenteCursoIds(usuario) : null
+
+    const query = Estudiante.query().orderBy('id', 'desc')
+    if (Array.isArray(cursoIds)) {
+      if (!cursoIds.length) {
+        return response.ok([])
+      }
+      query.whereIn('curso_id', cursoIds)
+    }
+
+    const estudiantes = await query
     return response.ok(estudiantes)
   }
 
   async show({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const estudiante = await Estudiante.find(params.id)
     if (!estudiante) {
       return response.notFound({ message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ message: 'Acceso denegado' })
+      }
     }
 
     return response.ok(estudiante)
@@ -94,9 +137,19 @@ export default class EstudianteController {
   }
 
   async update({ params, request, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const estudiante = await Estudiante.find(params.id)
     if (!estudiante) {
       return response.notFound({ message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ message: 'Acceso denegado' })
+      }
     }
 
     const payload = request.only([
@@ -123,9 +176,19 @@ export default class EstudianteController {
   }
 
   async destroy({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const estudiante = await Estudiante.find(params.id)
     if (!estudiante) {
       return response.notFound({ message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ message: 'Acceso denegado' })
+      }
     }
 
     await estudiante.delete()
@@ -365,9 +428,19 @@ export default class EstudianteController {
    * GET /estudiantes/:id/acudientes
    */
   async listarAcudientes({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const estudiante = await Estudiante.find(params.id)
     if (!estudiante) {
       return response.notFound({ success: false, message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ success: false, message: 'Acceso denegado' })
+      }
     }
 
     await estudiante.load('acudientes')
@@ -390,9 +463,19 @@ export default class EstudianteController {
    * POST /estudiantes/:id/acudientes
    */
   async vincularAcudiente({ params, request, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const estudiante = await Estudiante.find(params.id)
     if (!estudiante) {
       return response.notFound({ success: false, message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ success: false, message: 'Acceso denegado' })
+      }
     }
 
     const acudienteId = request.input('acudienteId')
@@ -439,7 +522,20 @@ export default class EstudianteController {
    * PUT /estudiantes/:id/acudientes/:acudienteId
    */
   async actualizarVinculo({ params, request, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const { id, acudienteId } = params
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds)) {
+        const estudiante = await Estudiante.find(id)
+        if (!estudiante || !cursoIds.includes(estudiante.cursoId)) {
+          return response.forbidden({ success: false, message: 'Acceso denegado' })
+        }
+      }
+    }
 
     const vinculo = await db
       .from('estudiante_acudiente')
@@ -481,7 +577,20 @@ export default class EstudianteController {
    * DELETE /estudiantes/:id/acudientes/:acudienteId
    */
   async desvincularAcudiente({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const { id, acudienteId } = params
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds)) {
+        const estudiante = await Estudiante.find(id)
+        if (!estudiante || !cursoIds.includes(estudiante.cursoId)) {
+          return response.forbidden({ success: false, message: 'Acceso denegado' })
+        }
+      }
+    }
 
     const deleted = await db
       .from('estudiante_acudiente')
@@ -505,9 +614,28 @@ export default class EstudianteController {
    * POST /estudiantes/:id/cambiar-curso
    */
   async cambiarCurso({ params, request, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const estudiante = await Estudiante.find(params.id)
     if (!estudiante) {
       return response.notFound({ success: false, message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds)) {
+        const nuevoCursoIdTmp = request.input('nuevoCursoId') || request.input('cursoId')
+        const nuevoCursoId = nuevoCursoIdTmp !== undefined ? Number(nuevoCursoIdTmp) : undefined
+
+        if (!cursoIds.includes(estudiante.cursoId)) {
+          return response.forbidden({ success: false, message: 'Acceso denegado' })
+        }
+
+        if (nuevoCursoId !== undefined && !Number.isNaN(nuevoCursoId) && !cursoIds.includes(nuevoCursoId)) {
+          return response.forbidden({ success: false, message: 'Acceso denegado' })
+        }
+      }
     }
 
     const nuevoCursoId = request.input('nuevoCursoId') || request.input('cursoId')
@@ -559,9 +687,19 @@ export default class EstudianteController {
    * POST /estudiantes/:id/retirar
    */
   async retirar({ params, request, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const estudiante = await Estudiante.find(params.id)
     if (!estudiante) {
       return response.notFound({ success: false, message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ success: false, message: 'Acceso denegado' })
+      }
     }
 
     const motivo = request.input('motivo') || 'Retiro voluntario'
@@ -597,9 +735,19 @@ export default class EstudianteController {
    * GET /estudiantes/:id/historial
    */
   async historial({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
     const estudiante = await Estudiante.find(params.id)
     if (!estudiante) {
       return response.notFound({ success: false, message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ success: false, message: 'Acceso denegado' })
+      }
     }
 
     const registros = await db
