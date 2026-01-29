@@ -21,14 +21,22 @@ router
     // === GESTIÓN DE PERSONAL ===
     // Vista unificada de personal (docentes + orientadores)
     router.get('/coordinadores/personal', [CoordinadoresController, 'personal'])
+    router.post('/coordinadores/personal', [CoordinadoresController, 'crearPersonal'])
+    router.put('/coordinadores/personal/:id', [CoordinadoresController, 'actualizarPersonal'])
+    router.patch('/coordinadores/personal/:id/estado', [CoordinadoresController, 'cambiarEstadoPersonal'])
     
-    // Docentes
+    // Docentes (endpoints específicos - mantener por compatibilidad)
     router.get('/coordinadores/docentes', [CoordinadoresController, 'docentes'])
     router.post('/coordinadores/docentes', [CoordinadoresController, 'crearDocente'])
     
-    // Orientadores
+    // Orientadores (endpoints específicos - mantener por compatibilidad)
     router.get('/coordinadores/orientadores', [CoordinadoresController, 'orientadores'])
     router.post('/coordinadores/orientadores', [CoordinadoresController, 'crearOrientador'])
+    router.put('/coordinadores/orientadores/:id', [CoordinadoresController, 'actualizarOrientador'])
+    router.delete('/coordinadores/orientadores/:id', [CoordinadoresController, 'eliminarOrientador'])
+    
+    // Acudientes/Padres de familia
+    router.get('/coordinadores/acudientes', [CoordinadoresController, 'listarAcudientes'])
 
     // === CONFIGURACIÓN ===
     // Ver datos de su institución

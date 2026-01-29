@@ -1,4 +1,5 @@
 import type { HttpContext } from '@adonisjs/core/http'
+import { DateTime } from 'luxon'
 import Funcionario from '#models/funcionario'
 import Usuario from '#models/usuario'
 import Institucion from '#models/institucion'
@@ -611,6 +612,7 @@ export default class RectoresController {
           fechaInicio: periodo.fechaInicio.toFormat('yyyy-MM-dd'),
           fechaFin: periodo.fechaFin.toFormat('yyyy-MM-dd'),
           estaActivo: periodo.estaActivo,
+          estado: periodo.estaActivo ? 'activo' : 'inactivo',
           institucionId: periodo.institucionId,
         })),
         total: periodos.length,
@@ -621,6 +623,7 @@ export default class RectoresController {
         success: false,
         message: 'Error al listar períodos',
         error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       })
     }
   }
@@ -638,11 +641,12 @@ export default class RectoresController {
 
       const institucionId = rector.institucionId
 
-      const { nombre, fechaInicio, fechaFin, estaActivo } = request.only([
+      const { nombre, fechaInicio, fechaFin, estaActivo, estado } = request.only([
         'nombre',
         'fechaInicio',
         'fechaFin',
         'estaActivo',
+        'estado',
       ])
 
       // Validar campos requeridos
@@ -653,13 +657,21 @@ export default class RectoresController {
         })
       }
 
+      // Determinar el valor de estaActivo (aceptar tanto booleano como string)
+      let estaActivoValue = true
+      if (estaActivo !== undefined) {
+        estaActivoValue = estaActivo
+      } else if (estado !== undefined) {
+        estaActivoValue = estado === 'activo'
+      }
+
       // Crear período
       const periodo = await Periodo.create({
         nombre,
         fechaInicio,
         fechaFin,
         institucionId,
-        estaActivo: estaActivo !== undefined ? estaActivo : true,
+        estaActivo: estaActivoValue,
       })
 
       // Recargar para obtener las fechas como DateTime
@@ -674,6 +686,7 @@ export default class RectoresController {
           fechaInicio: periodo.fechaInicio.toFormat('yyyy-MM-dd'),
           fechaFin: periodo.fechaFin.toFormat('yyyy-MM-dd'),
           estaActivo: periodo.estaActivo,
+          estado: periodo.estaActivo ? 'activo' : 'inactivo',
           institucionId: periodo.institucionId,
         },
       })
@@ -683,6 +696,7 @@ export default class RectoresController {
         success: false,
         message: 'Error al crear período',
         error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       })
     }
   }
@@ -704,20 +718,42 @@ export default class RectoresController {
       const periodo = await Periodo.query()
         .where('id', params.id)
         .where('institucion_id', institucionId)
-        .firstOrFail()
+        .first()
 
-      const { nombre, fechaInicio, fechaFin, estaActivo } = request.only([
+      if (!periodo) {
+        return response.status(404).json({
+          success: false,
+          message: `Período con ID ${params.id} no encontrado o no pertenece a su institución`,
+        })
+      }
+
+      const { nombre, fechaInicio, fechaFin, estaActivo, estado } = request.only([
         'nombre',
         'fechaInicio',
         'fechaFin',
         'estaActivo',
+        'estado',
       ])
 
       // Actualizar campos
       if (nombre !== undefined) periodo.nombre = nombre
-      if (fechaInicio !== undefined) periodo.fechaInicio = fechaInicio
-      if (fechaFin !== undefined) periodo.fechaFin = fechaFin
-      if (estaActivo !== undefined) periodo.estaActivo = estaActivo
+      if (fechaInicio !== undefined) {
+        periodo.fechaInicio = typeof fechaInicio === 'string' 
+          ? DateTime.fromISO(fechaInicio) 
+          : fechaInicio
+      }
+      if (fechaFin !== undefined) {
+        periodo.fechaFin = typeof fechaFin === 'string'
+          ? DateTime.fromISO(fechaFin)
+          : fechaFin
+      }
+      
+      // Aceptar tanto estaActivo (booleano) como estado (string "activo"/"inactivo")
+      if (estaActivo !== undefined) {
+        periodo.estaActivo = estaActivo
+      } else if (estado !== undefined) {
+        periodo.estaActivo = estado === 'activo'
+      }
 
       await periodo.save()
 
@@ -730,15 +766,26 @@ export default class RectoresController {
           fechaInicio: periodo.fechaInicio.toFormat('yyyy-MM-dd'),
           fechaFin: periodo.fechaFin.toFormat('yyyy-MM-dd'),
           estaActivo: periodo.estaActivo,
+          estado: periodo.estaActivo ? 'activo' : 'inactivo',
           institucionId: periodo.institucionId,
         },
       })
     } catch (error) {
       console.error('Error al actualizar período:', error)
+      
+      if (error.code === 'E_ROW_NOT_FOUND') {
+        return response.status(404).json({
+          success: false,
+          message: 'Período no encontrado',
+          error: error.message,
+        })
+      }
+
       return response.status(500).json({
         success: false,
         message: 'Error al actualizar período',
         error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       })
     }
   }

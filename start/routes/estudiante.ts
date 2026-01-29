@@ -25,4 +25,5 @@ router.get('/estudiantes/:id/historial', [EstudianteController, 'historial']).us
 router.get('/estudiantes/plantilla-excel', [EstudianteController, 'descargarPlantilla']).use(middleware.jwt())
 router.post('/estudiantes/validar-excel', [EstudianteController, 'validarExcel']).use(middleware.jwt())
 router.post('/estudiantes/carga-masiva', [EstudianteController, 'cargaMasiva']).use(middleware.jwt())
+router.post('/estudiantes/carga-masiva-dual', [EstudianteController, 'cargaMasivaDual']).use(middleware.jwt())
 

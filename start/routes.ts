@@ -26,6 +26,7 @@ import './routes/coordinadores.js'
 import './routes/movil.js'
 import './routes/setup.js'
 import './routes/reportes.js'
+import './routes/debug.js'
 
 
 
