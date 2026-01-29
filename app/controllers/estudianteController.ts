@@ -765,5 +765,334 @@ export default class EstudianteController {
 
     return response.ok({ success: true, data: historial })
   }
+
+  /**
+   * Carga masiva dual de estudiantes y acudientes (DOS archivos)
+   * POST /estudiantes/carga-masiva-dual
+   */
+  async cargaMasivaDual({ request, response }: HttpContext) {
+    try {
+      const archivoEstudiantes = request.file('archivo_estudiantes', {
+        size: '10mb',
+        extnames: ['xlsx', 'xls', 'csv'],
+      })
+
+      const archivoAcudientes = request.file('archivo_acudientes', {
+        size: '10mb',
+        extnames: ['xlsx', 'xls', 'csv'],
+      })
+
+      const institucionId = Number(request.input('institucionId') || request.input('institucion_id'))
+
+      if (!archivoEstudiantes) {
+        return response.status(400).json({
+          success: false,
+          message: 'No se ha proporcionado el archivo de estudiantes',
+        })
+      }
+
+      if (!archivoAcudientes) {
+        return response.status(400).json({
+          success: false,
+          message: 'No se ha proporcionado el archivo de acudientes',
+        })
+      }
+
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'El institucionId es requerido',
+        })
+      }
+
+      if (!archivoEstudiantes.isValid) {
+        return response.status(400).json({
+          success: false,
+          message: 'El archivo de estudiantes no es válido',
+          errors: archivoEstudiantes.errors,
+        })
+      }
+
+      if (!archivoAcudientes.isValid) {
+        return response.status(400).json({
+          success: false,
+          message: 'El archivo de acudientes no es válido',
+          errors: archivoAcudientes.errors,
+        })
+      }
+
+      // Mover archivos a tmp y leer
+      const tmpDir = app.tmpPath('uploads')
+      await archivoEstudiantes.move(tmpDir, { name: `estudiantes_${Date.now()}.xlsx` })
+      await archivoAcudientes.move(tmpDir, { name: `acudientes_${Date.now()}.xlsx` })
+
+      const bufferEstudiantes = await readFile(archivoEstudiantes.filePath!)
+      const bufferAcudientes = await readFile(archivoAcudientes.filePath!)
+
+      // Importar servicio
+      const CargaMasivaDualService = (await import('#services/carga_masiva_dual_service')).default
+
+      // Parsear acudientes primero
+      const resultadoAcudientes = CargaMasivaDualService.parseAcudientesFile(bufferAcudientes)
+
+      if (resultadoAcudientes.validRows.length === 0) {
+        return response.status(400).json({
+          success: false,
+          message: 'No hay acudientes válidos en el archivo',
+          data: {
+            errores: resultadoAcudientes.invalidRows,
+          },
+        })
+      }
+
+      // Crear set de documentos de acudientes para validación
+      const acudientesDocumentos = new Set(
+        resultadoAcudientes.validRows.map((a) => a.numeroDocumento)
+      )
+
+      // Parsear estudiantes
+      const resultadoEstudiantes = CargaMasivaDualService.parseEstudiantesFile(
+        bufferEstudiantes,
+        acudientesDocumentos
+      )
+
+      if (resultadoEstudiantes.validRows.length === 0) {
+        return response.status(400).json({
+          success: false,
+          message: 'No hay estudiantes válidos en el archivo',
+          data: {
+            errores: [
+              ...resultadoAcudientes.invalidRows,
+              ...resultadoEstudiantes.invalidRows,
+            ],
+          },
+        })
+      }
+
+      // Usar transacción para insertar todo
+      const acudientesCreados: any[] = []
+      const acudientesReutilizados: any[] = []
+      const estudiantesCreados: any[] = []
+      const vinculosCreados: any[] = []
+      const errores: any[] = [
+        ...resultadoAcudientes.invalidRows,
+        ...resultadoEstudiantes.invalidRows,
+      ]
+
+      await db.transaction(async (trx) => {
+        // 1. Crear/obtener acudientes
+        const mapaAcudientes = new Map<string, number>() // documento -> id
+
+        for (const acudienteData of resultadoAcudientes.validRows) {
+          try {
+            // Verificar si ya existe
+            let acudiente = await Acudiente.query()
+              .useTransaction(trx)
+              .where('numero_documento', acudienteData.numeroDocumento)
+              .first()
+
+            if (acudiente) {
+              // Reutilizar acudiente existente
+              acudientesReutilizados.push({
+                id: acudiente.id,
+                numeroDocumento: acudiente.numeroDocumento,
+                nombres: acudiente.nombres,
+              })
+              mapaAcudientes.set(acudienteData.numeroDocumento, acudiente.id)
+            } else {
+              // Crear usuario para el acudiente (rol acudiente = 6)
+              const correoAcudiente = acudienteData.correo || `acudiente_${acudienteData.numeroDocumento}@temp.com`
+              
+              // Verificar si el correo ya existe en el sistema
+              const usuarioExistente = await Usuario.query()
+                .useTransaction(trx)
+                .where('correo', correoAcudiente)
+                .first()
+
+              if (usuarioExistente) {
+                errores.push({
+                  archivo: 'acudientes',
+                  fila: 0,
+                  campo: 'correo',
+                  valor: correoAcudiente,
+                  mensaje: `El correo ya está registrado en el sistema (Usuario ID: ${usuarioExistente.id})`,
+                })
+                continue
+              }
+
+              const usuario = await Usuario.create(
+                {
+                  correo: correoAcudiente,
+                  contrasenaHash: `Temp${acudienteData.numeroDocumento}!`, // Contraseña temporal
+                  rolId: 6, // Rol acudiente
+                  estaActivo: true,
+                  debeCambiarContrasena: true,
+                },
+                { client: trx }
+              )
+
+              // Crear nuevo acudiente
+              acudiente = await Acudiente.create(
+                {
+                  nombres: acudienteData.nombres,
+                  apellidos: acudienteData.apellidos,
+                  numeroDocumento: acudienteData.numeroDocumento,
+                  tipoDocumento: acudienteData.tipoDocumento,
+                  telefono: acudienteData.telefono,
+                  correo: acudienteData.correo,
+                  direccion: acudienteData.direccion,
+                  ocupacion: acudienteData.ocupacion,
+                  usuarioId: usuario.id,
+                },
+                { client: trx }
+              )
+
+              acudientesCreados.push({
+                id: acudiente.id,
+                numeroDocumento: acudiente.numeroDocumento,
+                nombres: acudiente.nombres,
+                apellidos: acudiente.apellidos,
+              })
+              mapaAcudientes.set(acudienteData.numeroDocumento, acudiente.id)
+            }
+          } catch (error) {
+            errores.push({
+              archivo: 'acudientes',
+              fila: 0,
+              campo: 'general',
+              valor: acudienteData.numeroDocumento,
+              mensaje: error.message,
+            })
+          }
+        }
+
+        // 2. Crear estudiantes y vincular con acudientes
+        for (const estudianteData of resultadoEstudiantes.validRows) {
+          try {
+            // Verificar si el documento ya existe en el sistema
+            const existente = await Estudiante.query()
+              .useTransaction(trx)
+              .where('numero_documento', estudianteData.numeroDocumento)
+              .preload('curso', (cursoQuery) => {
+                cursoQuery.preload('institucion')
+              })
+              .first()
+
+            if (existente) {
+              const institucionNombre = existente.curso?.institucion?.nombre || 'Desconocida'
+              const cursoNombre = existente.curso?.nombre || 'Desconocido'
+              
+              errores.push({
+                archivo: 'estudiantes',
+                fila: 0,
+                campo: 'numero_documento',
+                valor: estudianteData.numeroDocumento,
+                mensaje: `Estudiante ya registrado en ${institucionNombre}, curso ${cursoNombre} (ID: ${existente.id})`,
+              })
+              continue
+            }
+
+            // Buscar curso por nombre/número
+            const curso = await Curso.query()
+              .useTransaction(trx)
+              .where('institucion_id', institucionId)
+              .where('nombre', 'like', `%${estudianteData.curso}%`)
+              .first()
+
+            if (!curso) {
+              errores.push({
+                archivo: 'estudiantes',
+                fila: 0,
+                campo: 'curso',
+                valor: estudianteData.curso,
+                mensaje: `Curso no encontrado en la institución`,
+              })
+              continue
+            }
+
+            // Crear estudiante
+            const estudiante = await Estudiante.create(
+              {
+                nombres: estudianteData.nombres,
+                apellidos: estudianteData.apellidos,
+                numeroDocumento: estudianteData.numeroDocumento,
+                tipoDocumento: estudianteData.tipoDocumento,
+                fechaNacimiento: estudianteData.fechaNacimiento,
+                sexo: estudianteData.sexo,
+                cursoId: curso.id,
+              },
+              { client: trx }
+            )
+
+            estudiantesCreados.push({
+              id: estudiante.id,
+              numeroDocumento: estudiante.numeroDocumento,
+              nombres: estudiante.nombres,
+              apellidos: estudiante.apellidos,
+              curso: curso.nombre,
+            })
+
+            // Vincular con acudiente
+            const acudienteId = mapaAcudientes.get(estudianteData.documentoAcudiente)
+            if (acudienteId) {
+              // Obtener parentesco del acudiente original
+              const acudienteOriginal = resultadoAcudientes.validRows.find(
+                (a) => a.numeroDocumento === estudianteData.documentoAcudiente
+              )
+
+              await db
+                .table('estudiante_acudiente')
+                .useTransaction(trx)
+                .insert({
+                  estudiante_id: estudiante.id,
+                  acudiente_id: acudienteId,
+                  relacion: acudienteOriginal?.parentesco || 'acudiente',
+                  es_principal: true,
+                })
+
+              vinculosCreados.push({
+                estudianteId: estudiante.id,
+                acudienteId: acudienteId,
+                parentesco: acudienteOriginal?.parentesco,
+              })
+            }
+          } catch (error) {
+            errores.push({
+              archivo: 'estudiantes',
+              fila: 0,
+              campo: 'general',
+              valor: estudianteData.numeroDocumento,
+              mensaje: error.message,
+            })
+          }
+        }
+      })
+
+      return response.status(201).json({
+        success: true,
+        message: 'Carga masiva dual completada exitosamente',
+        data: {
+          totalEstudiantes: resultadoEstudiantes.totalRows,
+          estudiantesCreados: estudiantesCreados.length,
+          estudiantesActualizados: 0,
+          totalAcudientes: resultadoAcudientes.totalRows,
+          acudientesCreados: acudientesCreados.length,
+          acudientesReutilizados: acudientesReutilizados.length,
+          vinculosCreados: vinculosCreados.length,
+          errores: errores.length > 0 ? errores : undefined,
+          detalleEstudiantes: estudiantesCreados,
+          detalleAcudientes: acudientesCreados,
+          detalleReutilizados: acudientesReutilizados,
+        },
+      })
+    } catch (error) {
+      console.error('Error en carga masiva dual:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al realizar carga masiva dual',
+        error: error.message,
+      })
+    }
+  }
 }
 

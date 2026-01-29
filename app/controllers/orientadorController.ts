@@ -215,4 +215,98 @@ export default class OrientadorController {
 
     return response.ok({ success: true, message: 'Orientador desactivado correctamente' })
   }
+
+  /**
+   * Listar acudientes/padres de familia de la institución
+   * GET /orientadores/acudientes
+   */
+  async listarAcudientes({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del orientador
+      const orientador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .where('rol_id', 4)
+        .firstOrFail()
+
+      const institucionId = orientador.institucionId
+
+      // Obtener acudientes de la institución con sus estudiantes vinculados
+      const acudientes = await db
+        .from('acudientes as a')
+        .join('estudiante_acudiente as ea', 'a.id', 'ea.acudiente_id')
+        .join('estudiantes as e', 'ea.estudiante_id', 'e.id')
+        .join('cursos as c', 'e.curso_id', 'c.id')
+        .where('c.institucion_id', institucionId)
+        .select(
+          'a.id',
+          'a.nombres',
+          'a.apellidos',
+          'a.numero_documento',
+          'a.tipo_documento',
+          'a.telefono',
+          'a.correo',
+          'a.direccion',
+          'a.ocupacion',
+          'a.parentesco'
+        )
+        .groupBy(
+          'a.id',
+          'a.nombres',
+          'a.apellidos',
+          'a.numero_documento',
+          'a.tipo_documento',
+          'a.telefono',
+          'a.correo',
+          'a.direccion',
+          'a.ocupacion',
+          'a.parentesco'
+        )
+
+      // Obtener estudiantes vinculados para cada acudiente
+      const acudientesConEstudiantes = await Promise.all(
+        acudientes.map(async (acudiente) => {
+          const estudiantes = await db
+            .from('estudiantes as e')
+            .join('estudiante_acudiente as ea', 'e.id', 'ea.estudiante_id')
+            .join('cursos as c', 'e.curso_id', 'c.id')
+            .where('ea.acudiente_id', acudiente.id)
+            .where('c.institucion_id', institucionId)
+            .select('e.id', 'e.nombres', 'e.apellidos', 'c.nombre as curso')
+
+          return {
+            id: acudiente.id,
+            nombres: acudiente.nombres,
+            apellidos: acudiente.apellidos,
+            numeroDocumento: acudiente.numero_documento,
+            tipoDocumento: acudiente.tipo_documento,
+            telefono: acudiente.telefono,
+            correo: acudiente.correo,
+            direccion: acudiente.direccion,
+            ocupacion: acudiente.ocupacion,
+            parentesco: acudiente.parentesco,
+            estudiantesVinculados: estudiantes.map((est) => ({
+              id: est.id,
+              nombres: est.nombres,
+              apellidos: est.apellidos,
+              curso: est.curso,
+            })),
+            totalEstudiantes: estudiantes.length,
+          }
+        })
+      )
+
+      return response.status(200).json({
+        success: true,
+        data: acudientesConEstudiantes,
+        total: acudientesConEstudiantes.length,
+      })
+    } catch (error) {
+      console.error('Error al listar acudientes:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar acudientes',
+        error: error.message,
+      })
+    }
+  }
 }

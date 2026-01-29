@@ -428,25 +428,27 @@ export default class CoordinadoresController {
 
       const docentesConMetricas = await Promise.all(
         docentes.map(async (docente) => {
-          // Cursos asignados
-          const cursosResult = await db
-            .from('docente_cursos')
-            .where('docente_id', docente.id)
-            .count('* as total')
+          // Buscar si existe en la tabla docentes
+          const docenteInfo = await db
+            .from('docentes')
+            .where('usuario_id', docente.id)
+            .first()
 
-          // Tareas creadas
-          const tareasResult = await db
-            .from('asignaciones')
-            .where('docente_id', docente.id)
-            .count('* as total')
-          const tareasCreadas = Number(tareasResult[0]?.total || 0)
+          let tareasCreadas = 0
+          if (docenteInfo) {
+            const tareasResult = await db
+              .from('asignaciones')
+              .where('docente_id', docenteInfo.id)
+              .count('* as total')
+            tareasCreadas = Number(tareasResult[0]?.total || 0)
+          }
 
           return {
             id: docente.id,
             nombre: docente.nombre,
             apellido: docente.apellido,
             correo: docente.correo,
-            cursosAsignados: Number(cursosResult[0]?.total || 0),
+            tienePerfilCompleto: !!docenteInfo,
             tareasCreadas,
             estadoAcademico: 'bien',
           }
@@ -497,14 +499,16 @@ export default class CoordinadoresController {
         .leftJoin('usuarios as u', 'f.usuario_id', 'u.id')
         .where('f.institucion_id', institucionId!)
         .where('f.rol_id', 4)
-        .select('f.id', 'f.nombre', 'f.apellido', 'u.correo')
+        .select('f.id', 'f.nombre', 'f.apellido', 'f.telefono', 'u.correo', 'u.esta_activo')
 
       const orientadoresConMetricas = orientadores.map((orientador) => {
         return {
           id: orientador.id,
           nombre: orientador.nombre,
           apellido: orientador.apellido,
+          telefono: orientador.telefono,
           correo: orientador.correo,
+          estaActivo: orientador.esta_activo,
           gradosAsignados: [],
           cursosAcompanados: 0,
           intervencionesAcademicas: 0,
@@ -844,6 +848,258 @@ export default class CoordinadoresController {
   }
 
   /**
+   * Actualizar orientador en la institución del coordinador
+   * PUT /coordinadores/orientadores/:id
+   */
+  async actualizarOrientador({ params, request, response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del coordinador
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      // Buscar el orientador y verificar que pertenece a la institución del coordinador
+      const orientador = await Funcionario.query()
+        .where('id', params.id)
+        .where('institucion_id', institucionId)
+        .where('rol_id', 4) // Solo orientadores
+        .first()
+
+      if (!orientador) {
+        return response.status(404).json({
+          success: false,
+          message: 'Orientador no encontrado o no pertenece a su institución',
+        })
+      }
+
+      const { correo, nombre, apellido, telefono, estaActivo } = request.only([
+        'correo',
+        'nombre',
+        'apellido',
+        'telefono',
+        'estaActivo',
+      ])
+
+      // Actualizar datos del funcionario
+      if (nombre !== undefined) orientador.nombre = nombre
+      if (apellido !== undefined) orientador.apellido = apellido
+      if (telefono !== undefined) orientador.telefono = telefono
+
+      await orientador.save()
+
+      // Actualizar datos del usuario si se proporciona correo o estado
+      if (correo !== undefined || estaActivo !== undefined) {
+        const usuario = await Usuario.findOrFail(orientador.usuarioId)
+
+        if (correo !== undefined && correo !== usuario.correo) {
+          // Validar formato de correo
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+          if (!emailRegex.test(correo)) {
+            return response.status(400).json({
+              success: false,
+              message: 'El formato del correo es inválido',
+            })
+          }
+
+          // Verificar que el nuevo correo no esté registrado
+          const existeCorreo = await Usuario.query()
+            .where('correo', correo)
+            .whereNot('id', usuario.id)
+            .first()
+
+          if (existeCorreo) {
+            return response.status(400).json({
+              success: false,
+              message: 'El correo ya está registrado en el sistema',
+            })
+          }
+
+          usuario.correo = correo
+        }
+
+        if (estaActivo !== undefined) {
+          usuario.estaActivo = estaActivo
+        }
+
+        await usuario.save()
+      }
+
+      // Recargar datos actualizados
+      await orientador.refresh()
+      const usuario = await Usuario.findOrFail(orientador.usuarioId)
+
+      return response.status(200).json({
+        success: true,
+        message: 'Orientador actualizado exitosamente',
+        data: {
+          id: orientador.id,
+          nombre: orientador.nombre,
+          apellido: orientador.apellido,
+          telefono: orientador.telefono,
+          correo: usuario.correo,
+          estaActivo: usuario.estaActivo,
+          institucionId: orientador.institucionId,
+        },
+      })
+    } catch (error) {
+      console.error('Error al actualizar orientador:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al actualizar orientador',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Eliminar orientador de la institución del coordinador
+   * DELETE /coordinadores/orientadores/:id
+   */
+  async eliminarOrientador({ params, response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del coordinador
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      // Buscar el orientador y verificar que pertenece a la institución del coordinador
+      const orientador = await Funcionario.query()
+        .where('id', params.id)
+        .where('institucion_id', institucionId)
+        .where('rol_id', 4) // Solo orientadores
+        .first()
+
+      if (!orientador) {
+        return response.status(404).json({
+          success: false,
+          message: 'Orientador no encontrado o no pertenece a su institución',
+        })
+      }
+
+      // Obtener usuario asociado antes de eliminar
+      const usuarioId = orientador.usuarioId
+
+      // Eliminar orientador (funcionario)
+      await orientador.delete()
+
+      // Eliminar usuario asociado
+      const usuario = await Usuario.find(usuarioId)
+      if (usuario) {
+        await usuario.delete()
+      }
+
+      return response.status(200).json({
+        success: true,
+        message: 'Orientador eliminado exitosamente',
+      })
+    } catch (error) {
+      console.error('Error al eliminar orientador:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al eliminar orientador',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Listar acudientes/padres de familia de la institución
+   * GET /coordinadores/acudientes
+   */
+  async listarAcudientes({ response, jwtUser }: HttpContext) {
+    try {
+      // Obtener la institución del coordinador
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      // Obtener acudientes de la institución con sus estudiantes vinculados
+      const acudientes = await db
+        .from('acudientes as a')
+        .join('estudiante_acudiente as ea', 'a.id', 'ea.acudiente_id')
+        .join('estudiantes as e', 'ea.estudiante_id', 'e.id')
+        .join('cursos as c', 'e.curso_id', 'c.id')
+        .where('c.institucion_id', institucionId)
+        .select(
+          'a.id',
+          'a.nombres',
+          'a.apellidos',
+          'a.numero_documento',
+          'a.tipo_documento',
+          'a.telefono',
+          'a.correo',
+          'a.direccion',
+          'a.ocupacion',
+          'a.parentesco'
+        )
+        .groupBy(
+          'a.id',
+          'a.nombres',
+          'a.apellidos',
+          'a.numero_documento',
+          'a.tipo_documento',
+          'a.telefono',
+          'a.correo',
+          'a.direccion',
+          'a.ocupacion',
+          'a.parentesco'
+        )
+
+      // Obtener estudiantes vinculados para cada acudiente
+      const acudientesConEstudiantes = await Promise.all(
+        acudientes.map(async (acudiente) => {
+          const estudiantes = await db
+            .from('estudiantes as e')
+            .join('estudiante_acudiente as ea', 'e.id', 'ea.estudiante_id')
+            .join('cursos as c', 'e.curso_id', 'c.id')
+            .where('ea.acudiente_id', acudiente.id)
+            .where('c.institucion_id', institucionId)
+            .select('e.id', 'e.nombres', 'e.apellidos', 'c.nombre as curso')
+
+          return {
+            id: acudiente.id,
+            nombres: acudiente.nombres,
+            apellidos: acudiente.apellidos,
+            numeroDocumento: acudiente.numero_documento,
+            tipoDocumento: acudiente.tipo_documento,
+            telefono: acudiente.telefono,
+            correo: acudiente.correo,
+            direccion: acudiente.direccion,
+            ocupacion: acudiente.ocupacion,
+            parentesco: acudiente.parentesco,
+            estudiantesVinculados: estudiantes.map((est) => ({
+              id: est.id,
+              nombres: est.nombres,
+              apellidos: est.apellidos,
+              curso: est.curso,
+            })),
+            totalEstudiantes: estudiantes.length,
+          }
+        })
+      )
+
+      return response.status(200).json({
+        success: true,
+        data: acudientesConEstudiantes,
+        total: acudientesConEstudiantes.length,
+      })
+    } catch (error) {
+      console.error('Error al listar acudientes:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar acudientes',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
    * Ver datos de la institución del coordinador
    * GET /coordinadores/mi-institucion
    */
@@ -892,6 +1148,304 @@ export default class CoordinadoresController {
       return response.status(500).json({
         success: false,
         message: 'Error al obtener institución',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Crear personal (docente u orientador)
+   * POST /coordinadores/personal
+   */
+  async crearPersonal({ request, response, jwtUser }: HttpContext) {
+    try {
+      const coordinador = await Funcionario.query().where('usuario_id', jwtUser!.id).first()
+
+      if (!coordinador) {
+        return response.status(404).json({
+          success: false,
+          message: 'Coordinador no encontrado',
+        })
+      }
+
+      const { tipo, correo, contrasena, nombre, apellido, telefono } = request.only([
+        'tipo',
+        'correo',
+        'contrasena',
+        'nombre',
+        'apellido',
+        'telefono',
+      ])
+
+      // Validar campos requeridos
+      if (!tipo || !correo || !contrasena || !nombre || !apellido) {
+        return response.status(400).json({
+          success: false,
+          message: 'Los campos tipo, correo, contraseña, nombre y apellido son requeridos',
+          errors: {
+            required: ['tipo', 'correo', 'contrasena', 'nombre', 'apellido'],
+          },
+        })
+      }
+
+      // Validar tipo
+      if (tipo !== 'docente' && tipo !== 'orientador') {
+        return response.status(400).json({
+          success: false,
+          message: 'El tipo debe ser "docente" o "orientador"',
+        })
+      }
+
+      // Validar formato de correo
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(correo)) {
+        return response.status(400).json({
+          success: false,
+          message: 'El formato del correo es inválido',
+        })
+      }
+
+      // Validar formato de contraseña
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/
+      if (!passwordRegex.test(contrasena)) {
+        return response.status(400).json({
+          success: false,
+          message:
+            'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial (@$!%*?&)',
+        })
+      }
+
+      // Verificar que el correo no esté registrado
+      const existeCorreo = await Usuario.findBy('correo', correo)
+      if (existeCorreo) {
+        return response.status(400).json({
+          success: false,
+          message: 'El correo ya está registrado en el sistema',
+          errors: {
+            correo: 'Este correo ya existe en el sistema',
+          },
+        })
+      }
+
+      const institucionId = coordinador.institucionId
+      const rolId = tipo === 'docente' ? 5 : 4
+
+      // Crear usuario
+      const usuario = await Usuario.create({
+        correo,
+        contrasenaHash: contrasena,
+        rolId,
+        estaActivo: true,
+        debeCambiarContrasena: true,
+      })
+
+      // Crear funcionario
+      const funcionario = await Funcionario.create({
+        nombre,
+        apellido,
+        telefono: telefono || null,
+        institucionId,
+        usuarioId: usuario.id,
+        rolId,
+      })
+
+      // Buscar si existe en tabla docentes (para tienePerfilCompleto)
+      let tienePerfilCompleto = false
+      if (tipo === 'docente') {
+        const docenteInfo = await db.from('docentes').where('usuario_id', usuario.id).first()
+        tienePerfilCompleto = !!docenteInfo
+      }
+
+      return response.status(201).json({
+        success: true,
+        message: `${tipo === 'docente' ? 'Docente' : 'Orientador'} creado exitosamente`,
+        data: {
+          id: funcionario.id,
+          nombre: funcionario.nombre,
+          apellido: funcionario.apellido,
+          correo: usuario.correo,
+          telefono: funcionario.telefono,
+          tipo,
+          rolNombre: tipo === 'docente' ? 'docente' : 'orientador',
+          estaActivo: usuario.estaActivo,
+          tienePerfilCompleto,
+          metricas: tipo === 'docente' ? { tareasCreadas: 0 } : { casosAcompanamiento: 0 },
+        },
+      })
+    } catch (error) {
+      console.error('Error al crear personal:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al crear personal',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Actualizar personal (docente u orientador)
+   * PUT /coordinadores/personal/:id
+   */
+  async actualizarPersonal({ params, request, response, jwtUser }: HttpContext) {
+    try {
+      const coordinador = await Funcionario.query().where('usuario_id', jwtUser!.id).first()
+
+      if (!coordinador) {
+        return response.status(404).json({
+          success: false,
+          message: 'Coordinador no encontrado',
+        })
+      }
+
+      // Buscar el funcionario a actualizar
+      const funcionario = await Funcionario.find(params.id)
+      if (!funcionario) {
+        return response.status(404).json({
+          success: false,
+          message: 'Personal no encontrado',
+        })
+      }
+
+      // Verificar que pertenece a la misma institución
+      if (funcionario.institucionId !== coordinador.institucionId) {
+        return response.status(403).json({
+          success: false,
+          message: 'No tienes permiso para actualizar este personal',
+        })
+      }
+
+      const { nombre, apellido, telefono, correo } = request.only([
+        'nombre',
+        'apellido',
+        'telefono',
+        'correo',
+      ])
+
+      // Actualizar datos del funcionario
+      if (nombre) funcionario.nombre = nombre
+      if (apellido) funcionario.apellido = apellido
+      if (telefono !== undefined) funcionario.telefono = telefono
+
+      await funcionario.save()
+
+      // Actualizar correo del usuario si se proporciona
+      if (correo) {
+        const usuario = await Usuario.find(funcionario.usuarioId)
+        if (usuario) {
+          // Verificar que el correo no esté en uso por otro usuario
+          const existeCorreo = await Usuario.query()
+            .where('correo', correo)
+            .whereNot('id', usuario.id)
+            .first()
+
+          if (existeCorreo) {
+            return response.status(400).json({
+              success: false,
+              message: 'El correo ya está registrado por otro usuario',
+              errors: {
+                correo: 'Este correo ya existe en el sistema',
+              },
+            })
+          }
+
+          usuario.correo = correo
+          await usuario.save()
+        }
+      }
+
+      // Obtener datos actualizados con usuario
+      await funcionario.load('usuario')
+      const tipo = funcionario.rolId === 5 ? 'docente' : 'orientador'
+
+      return response.status(200).json({
+        success: true,
+        message: 'Personal actualizado exitosamente',
+        data: {
+          id: funcionario.id,
+          nombre: funcionario.nombre,
+          apellido: funcionario.apellido,
+          correo: funcionario.usuario?.correo,
+          telefono: funcionario.telefono,
+          tipo,
+          estaActivo: funcionario.usuario?.estaActivo,
+        },
+      })
+    } catch (error) {
+      console.error('Error al actualizar personal:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al actualizar personal',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Cambiar estado de personal (activar/desactivar)
+   * PATCH /coordinadores/personal/:id/estado
+   */
+  async cambiarEstadoPersonal({ params, request, response, jwtUser }: HttpContext) {
+    try {
+      const coordinador = await Funcionario.query().where('usuario_id', jwtUser!.id).first()
+
+      if (!coordinador) {
+        return response.status(404).json({
+          success: false,
+          message: 'Coordinador no encontrado',
+        })
+      }
+
+      // Buscar el funcionario
+      const funcionario = await Funcionario.find(params.id)
+      if (!funcionario) {
+        return response.status(404).json({
+          success: false,
+          message: 'Personal no encontrado',
+        })
+      }
+
+      // Verificar que pertenece a la misma institución
+      if (funcionario.institucionId !== coordinador.institucionId) {
+        return response.status(403).json({
+          success: false,
+          message: 'No tienes permiso para modificar este personal',
+        })
+      }
+
+      const { estaActivo } = request.only(['estaActivo'])
+
+      if (estaActivo === undefined) {
+        return response.status(400).json({
+          success: false,
+          message: 'El campo estaActivo es requerido',
+        })
+      }
+
+      // Actualizar estado del usuario
+      const usuario = await Usuario.find(funcionario.usuarioId)
+      if (!usuario) {
+        return response.status(404).json({
+          success: false,
+          message: 'Usuario no encontrado',
+        })
+      }
+
+      usuario.estaActivo = estaActivo
+      await usuario.save()
+
+      return response.status(200).json({
+        success: true,
+        message: `Personal ${estaActivo ? 'activado' : 'desactivado'} exitosamente`,
+        data: {
+          id: funcionario.id,
+          estaActivo: usuario.estaActivo,
+        },
+      })
+    } catch (error) {
+      console.error('Error al cambiar estado de personal:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al cambiar estado de personal',
         error: error.message,
       })
     }
