@@ -2,10 +2,22 @@ import type { HttpContext } from '@adonisjs/core/http'
 import db from '@adonisjs/lucid/services/db'
 import hash from '@adonisjs/core/services/hash'
 import Funcionario from '#models/funcionario'
+import Role from '#models/role'
 import Usuario from '#models/usuario'
 import { DateTime } from 'luxon'
 
 export default class OrientadorController {
+  private async userEsOrientador(jwtUser: any): Promise<boolean> {
+    if (!jwtUser) return false
+    const rol = await Role.find(jwtUser.rolId)
+    return (rol?.nombre ?? '').toLowerCase() === 'orientador'
+  }
+
+  private async getOrientadorRoleId(): Promise<number | null> {
+    const rol = await Role.query().whereRaw('LOWER(nombre) = ?', ['orientador']).first()
+    return rol?.id ?? null
+  }
+
   /**
    * Listar orientadores de la institución
    * GET /orientadores
@@ -22,7 +34,8 @@ export default class OrientadorController {
     const query = db
       .from('funcionarios as f')
       .leftJoin('usuarios as u', 'f.usuario_id', 'u.id')
-      .where('f.rol_id', 4) // rolId 4 = orientador
+      .leftJoin('roles as r', 'f.rol_id', 'r.id')
+      .whereRaw('LOWER(r.nombre) = ?', ['orientador'])
       .whereNull('f.eliminado_en')
       .select(
         'f.id',
@@ -52,10 +65,12 @@ export default class OrientadorController {
     const orientador = await db
       .from('funcionarios as f')
       .leftJoin('usuarios as u', 'f.usuario_id', 'u.id')
+      .leftJoin('roles as r', 'f.rol_id', 'r.id')
       .where('f.id', params.id)
-      .where('f.rol_id', 4)
+      .whereRaw('LOWER(r.nombre) = ?', ['orientador'])
       .select(
         'f.id',
+        'f.rol_id as rolId',
         'f.nombre as firstName',
         'f.apellido as lastName',
         'u.correo as email',
@@ -68,6 +83,11 @@ export default class OrientadorController {
       .first()
 
     if (!orientador) {
+      return response.notFound({ success: false, message: 'Orientador no encontrado' })
+    }
+
+    const rol = await Role.find(orientador.rolId)
+    if ((rol?.nombre ?? '').toLowerCase() !== 'orientador') {
       return response.notFound({ success: false, message: 'Orientador no encontrado' })
     }
 
@@ -119,6 +139,14 @@ export default class OrientadorController {
       institucionId = funcionario?.institucionId || null
     }
 
+    const orientadorRolId = await this.getOrientadorRoleId()
+    if (!orientadorRolId) {
+      return response.internalServerError({
+        success: false,
+        message: 'No existe el rol orientador en la tabla roles',
+      })
+    }
+
     // Generar contraseña: usar la enviada o generar temporal
     const passwordFinal = contrasena || `Orient${new Date().getFullYear()}!`
     const usaPasswordTemporal = !contrasena
@@ -128,7 +156,7 @@ export default class OrientadorController {
     const usuario = await Usuario.create({
       correo: email,
       contrasenaHash,
-      rolId: 4, // Orientador
+      rolId: orientadorRolId,
       estaActivo: true,
       debeCambiarContrasena: usaPasswordTemporal, // Solo debe cambiar si es temporal
     })
@@ -140,7 +168,7 @@ export default class OrientadorController {
       telefono: phone,
       direccion: address,
       correoInstitucional: email,
-      rolId: 4,
+      rolId: orientadorRolId,
       usuarioId: usuario.id,
       institucionId,
     })
@@ -166,10 +194,14 @@ export default class OrientadorController {
   async update({ params, request, response }: HttpContext) {
     const orientador = await Funcionario.query()
       .where('id', params.id)
-      .where('rol_id', 4)
       .first()
 
     if (!orientador) {
+      return response.notFound({ success: false, message: 'Orientador no encontrado' })
+    }
+
+    const rol = await Role.find(orientador.rolId)
+    if ((rol?.nombre ?? '').toLowerCase() !== 'orientador') {
       return response.notFound({ success: false, message: 'Orientador no encontrado' })
     }
 
@@ -197,10 +229,14 @@ export default class OrientadorController {
   async destroy({ params, response }: HttpContext) {
     const orientador = await Funcionario.query()
       .where('id', params.id)
-      .where('rol_id', 4)
       .first()
 
     if (!orientador) {
+      return response.notFound({ success: false, message: 'Orientador no encontrado' })
+    }
+
+    const rol = await Role.find(orientador.rolId)
+    if ((rol?.nombre ?? '').toLowerCase() !== 'orientador') {
       return response.notFound({ success: false, message: 'Orientador no encontrado' })
     }
 
@@ -222,13 +258,26 @@ export default class OrientadorController {
    */
   async listarAcudientes({ response, jwtUser }: HttpContext) {
     try {
+      const esOrientador = await this.userEsOrientador(jwtUser)
+      if (!esOrientador) {
+        return response.forbidden({
+          success: false,
+          message: 'No autorizado: el usuario no es orientador',
+        })
+      }
+
       // Obtener la institución del orientador
       const orientador = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
-        .where('rol_id', 4)
         .firstOrFail()
 
       const institucionId = orientador.institucionId
+      if (!institucionId) {
+        return response.badRequest({
+          success: false,
+          message: 'El orientador no tiene institución asociada',
+        })
+      }
 
       // Obtener acudientes de la institución con sus estudiantes vinculados
       const acudientes = await db
@@ -301,10 +350,192 @@ export default class OrientadorController {
         total: acudientesConEstudiantes.length,
       })
     } catch (error) {
+      if ((error as any)?.code === 'E_ROW_NOT_FOUND') {
+        return response.forbidden({
+          success: false,
+          message: 'No autorizado: el usuario no es orientador o no tiene registro de funcionario',
+        })
+      }
       console.error('Error al listar acudientes:', error)
       return response.status(500).json({
         success: false,
         message: 'Error al listar acudientes',
+        error: error.message,
+      })
+    }
+  }
+
+  async listarAcudientesInstitucion({ response, jwtUser }: HttpContext) {
+    try {
+      const esOrientador = await this.userEsOrientador(jwtUser)
+      if (!esOrientador) {
+        return response.forbidden({
+          success: false,
+          message: 'No autorizado: el usuario no es orientador',
+        })
+      }
+
+      const orientador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = orientador.institucionId
+      if (!institucionId) {
+        return response.badRequest({
+          success: false,
+          message: 'El orientador no tiene institución asociada',
+        })
+      }
+
+      const acudientes = await db
+        .from('acudientes as a')
+        .join('estudiante_acudiente as ea', 'a.id', 'ea.acudiente_id')
+        .join('estudiantes as e', 'ea.estudiante_id', 'e.id')
+        .join('cursos as c', 'e.curso_id', 'c.id')
+        .where('c.institucion_id', institucionId)
+        .select(
+          'a.id',
+          'a.nombres',
+          'a.apellidos',
+          'a.numero_documento',
+          'a.tipo_documento',
+          'a.telefono',
+          'a.correo',
+          'a.direccion',
+          'a.ocupacion',
+          'a.parentesco'
+        )
+        .groupBy(
+          'a.id',
+          'a.nombres',
+          'a.apellidos',
+          'a.numero_documento',
+          'a.tipo_documento',
+          'a.telefono',
+          'a.correo',
+          'a.direccion',
+          'a.ocupacion',
+          'a.parentesco'
+        )
+        .orderBy('a.nombres')
+
+      return response.ok({ success: true, data: acudientes, total: acudientes.length })
+    } catch (error) {
+      if ((error as any)?.code === 'E_ROW_NOT_FOUND') {
+        return response.forbidden({
+          success: false,
+          message: 'No autorizado: el usuario no es orientador o no tiene registro de funcionario',
+        })
+      }
+      console.error('Error al listar acudientes por institución:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar acudientes por institución',
+        error: error.message,
+      })
+    }
+  }
+
+  async listarEstudiantesPorAcudiente({ params, response, jwtUser }: HttpContext) {
+    try {
+      const esOrientador = await this.userEsOrientador(jwtUser)
+      if (!esOrientador) {
+        return response.forbidden({
+          success: false,
+          message: 'No autorizado: el usuario no es orientador',
+        })
+      }
+
+      const orientador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = orientador.institucionId
+      if (!institucionId) {
+        return response.badRequest({
+          success: false,
+          message: 'El orientador no tiene institución asociada',
+        })
+      }
+      const acudienteId = Number(params.acudienteId ?? params.id)
+      if (Number.isNaN(acudienteId)) {
+        return response.badRequest({ success: false, message: 'acudienteId inválido' })
+      }
+
+      const estudiantes = await db
+        .from('estudiantes as e')
+        .join('estudiante_acudiente as ea', 'e.id', 'ea.estudiante_id')
+        .join('cursos as c', 'e.curso_id', 'c.id')
+        .where('ea.acudiente_id', acudienteId)
+        .where('c.institucion_id', institucionId)
+        .select(
+          'e.id',
+          'e.nombres',
+          'e.apellidos',
+          'e.numero_documento',
+          'e.tipo_documento',
+          'e.curso_id',
+          'c.nombre as curso',
+          'c.grado_id'
+        )
+        .orderBy('e.nombres')
+
+      return response.ok({ success: true, data: estudiantes, total: estudiantes.length })
+    } catch (error) {
+      if ((error as any)?.code === 'E_ROW_NOT_FOUND') {
+        return response.forbidden({
+          success: false,
+          message: 'No autorizado: el usuario no es orientador o no tiene registro de funcionario',
+        })
+      }
+      console.error('Error al listar estudiantes por acudiente:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar estudiantes por acudiente',
+        error: error.message,
+      })
+    }
+  }
+
+  async listarEstudiantesInstitucion({ response, jwtUser }: HttpContext) {
+    try {
+      const esOrientador = await this.userEsOrientador(jwtUser)
+      if (!esOrientador) {
+        return response.forbidden({
+          success: false,
+          message: 'No autorizado: el usuario no es orientador',
+        })
+      }
+
+      const orientador = await Funcionario.query().where('usuario_id', jwtUser!.id).firstOrFail()
+      const institucionId = orientador.institucionId
+      if (!institucionId) {
+        return response.badRequest({
+          success: false,
+          message: 'El orientador no tiene institución asociada',
+        })
+      }
+
+      const estudiantes = await db
+        .from('estudiantes as e')
+        .join('cursos as c', 'e.curso_id', 'c.id')
+        .where('c.institucion_id', institucionId)
+        .select('e.*', 'c.nombre as curso', 'c.grado_id as grado_id')
+        .orderBy('e.nombres')
+
+      return response.ok({ success: true, data: estudiantes, total: estudiantes.length })
+    } catch (error) {
+      if ((error as any)?.code === 'E_ROW_NOT_FOUND') {
+        return response.forbidden({
+          success: false,
+          message: 'No autorizado: el usuario no es orientador o no tiene registro de funcionario',
+        })
+      }
+
+      console.error('Error al listar estudiantes por institución:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar estudiantes por institución',
         error: error.message,
       })
     }

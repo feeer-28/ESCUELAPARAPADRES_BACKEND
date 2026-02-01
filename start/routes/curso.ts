@@ -4,6 +4,7 @@ import CursoController from '#controllers/cursoController'
 
 // Rutas públicas (solo lectura)
 router.get('/cursos', [CursoController, 'index'])
+router.get('/cursos/institucion/:institucionId', [CursoController, 'porInstitucion'])
 router.get('/cursos/:id', [CursoController, 'show'])
 
 // Rutas protegidas - Solo Admin Sistema

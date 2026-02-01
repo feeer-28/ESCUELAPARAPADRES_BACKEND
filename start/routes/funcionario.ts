@@ -1,6 +1,6 @@
 
  import router from '@adonisjs/core/services/router'
- import { middleware } from '#start/kernel'
+ //import { middleware } from '#start/kernel'
  import FuncionariosController from '#controllers/funcionariosController'
  
  router
@@ -12,4 +12,4 @@
      router.patch('/funcionarios/:id', [FuncionariosController, 'update'])
      router.delete('/funcionarios/:id', [FuncionariosController, 'destroy'])
    })
-   .use(middleware.jwt())
+   
