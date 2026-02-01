@@ -7,6 +7,13 @@ router.get('/orientadores', [OrientadorController, 'index']).use(middleware.jwt(
 
 // Acudientes/Padres de familia de la institución (ANTES de /:id para evitar conflictos)
 router.get('/orientadores/acudientes', [OrientadorController, 'listarAcudientes']).use(middleware.jwt())
+router
+  .get('/orientadores/acudientes-institucion', [OrientadorController, 'listarAcudientesInstitucion'])
+  .use(middleware.jwt())
+router
+  .get('/orientadores/acudientes/:acudienteId/estudiantes', [OrientadorController, 'listarEstudiantesPorAcudiente'])
+  .use(middleware.jwt())
+router.get('/orientadores/estudiantes', [OrientadorController, 'listarEstudiantesInstitucion']).use(middleware.jwt())
 
 router.get('/orientadores/:id', [OrientadorController, 'show']).use(middleware.jwt())
 router.post('/orientadores', [OrientadorController, 'store']).use(middleware.jwt())
