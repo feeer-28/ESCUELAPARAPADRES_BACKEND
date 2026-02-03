@@ -7,6 +7,21 @@ export default class CursoController {
     return response.ok(cursos)
   }
 
+  async porInstitucion({ params, request, response }: HttpContext) {
+    const institucionIdRaw = params.institucionId ?? request.input('institucionId') ?? request.input('institucion_id')
+    const institucionId = Number(institucionIdRaw)
+    if (!institucionIdRaw || Number.isNaN(institucionId)) {
+      return response.badRequest({ message: 'institucionId inválido' })
+    }
+
+    const cursos = await Curso.query()
+      .where('institucion_id', institucionId)
+      .orderBy('grado_id', 'asc')
+      .orderBy('nombre', 'asc')
+
+    return response.ok({ cursos })
+  }
+
   async show({ params, response }: HttpContext) {
     const curso = await Curso.find(params.id)
     if (!curso) {
