@@ -6,7 +6,21 @@ import DocenteController from '#controllers/docenteController'
 router.post('/docentes/login', [DocenteController, 'login'])
 router.post('/docentes/logout', [DocenteController, 'logout']).use(middleware.jwt())
 
-// Rutas protegidas con JWT (lectura)
+// ========================================
+// Rutas para gestión de estudiantes y acudientes por docentes
+// ========================================
+
+// Gestión de estudiantes (rutas específicas primero)
+router.get('/docentes/estudiantes', [DocenteController, 'listarEstudiantes']).use(middleware.jwt())
+router.get('/docentes/estudiantes/:id', [DocenteController, 'verEstudiante']).use(middleware.jwt())
+router.put('/docentes/estudiantes/:id', [DocenteController, 'editarEstudiante']).use(middleware.jwt())
+
+// Gestión de acudientes (rutas específicas primero)
+router.get('/docentes/acudientes', [DocenteController, 'listarAcudientes']).use(middleware.jwt())
+router.get('/docentes/acudientes/:id', [DocenteController, 'verAcudiente']).use(middleware.jwt())
+router.put('/docentes/acudientes/:id', [DocenteController, 'editarAcudiente']).use(middleware.jwt())
+
+// Rutas protegidas con JWT (lectura) - rutas genéricas al final
 router.get('/docentes', [DocenteController, 'index']).use(middleware.jwt())
 router.get('/docentes/:id', [DocenteController, 'show']).use(middleware.jwt())
 

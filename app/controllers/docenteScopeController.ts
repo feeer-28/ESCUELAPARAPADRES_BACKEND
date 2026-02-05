@@ -1,5 +1,6 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import db from '@adonisjs/lucid/services/db'
+import { DateTime } from 'luxon'
 
 import Asignacion from '#models/asignacion'
 import Curso from '#models/curso'
@@ -223,4 +224,263 @@ export default class DocenteScopeController {
 
     return response.ok({ entregas })
   }
+
+  async asignaciones(ctx: HttpContext) {
+    const { request, response } = ctx
+
+    const docente = await this.getDocenteOrFail(ctx)
+    if (!docente) return
+
+    const periodoIdRaw = request.input('periodoId') ?? request.qs().periodoId ?? request.input('periodo')
+    const cursoIdRaw = request.input('cursoId') ?? request.qs().cursoId ?? request.input('curso_id')
+    const estadoRaw = (request.input('estado') ?? request.qs().estado ?? '').toString().toLowerCase().trim()
+    const detalleRaw = (request.input('detallePorCurso') ?? request.qs().detallePorCurso ?? '').toString().toLowerCase().trim()
+    const pageRaw = request.input('page') ?? request.qs().page
+    const perPageRaw = request.input('perPage') ?? request.qs().perPage
+
+    const periodoId = periodoIdRaw !== undefined ? Number(periodoIdRaw) : undefined
+    const cursoId = cursoIdRaw !== undefined ? Number(cursoIdRaw) : undefined
+    const page = pageRaw !== undefined ? Math.max(1, Number(pageRaw)) : 1
+    const perPage = perPageRaw !== undefined ? Math.max(1, Math.min(100, Number(perPageRaw))) : 10
+    const detallePorCurso = detalleRaw === '1' || detalleRaw === 'true'
+
+    if (periodoId !== undefined && Number.isNaN(periodoId)) {
+      return response.badRequest({ message: 'periodoId inválido' })
+    }
+    if (cursoId !== undefined && Number.isNaN(cursoId)) {
+      return response.badRequest({ message: 'cursoId inválido' })
+    }
+    if (pageRaw !== undefined && Number.isNaN(page)) {
+      return response.badRequest({ message: 'page inválido' })
+    }
+    if (perPageRaw !== undefined && Number.isNaN(perPage)) {
+      return response.badRequest({ message: 'perPage inválido' })
+    }
+    if (estadoRaw && !['pendiente', 'entregada', 'calificada', 'vencida'].includes(estadoRaw)) {
+      return response.badRequest({ message: 'estado inválido' })
+    }
+
+    // Limitar a cursos del docente
+    const cursoIdsDocente = await this.getDocenteCursoIds(docente.id)
+    if (cursoId !== undefined && !cursoIdsDocente.includes(cursoId)) {
+      return response.forbidden({ message: 'No tienes acceso a ese curso' })
+    }
+
+    const asignacionesQuery = Asignacion.query()
+      .where('docente_id', docente.id)
+      .orderBy('fecha_inicio', 'desc')
+      .preload('categoria')
+      .preload('bancoTarea')
+      .preload('curso')
+
+    if (periodoId !== undefined) asignacionesQuery.where('periodo_id', periodoId)
+    if (cursoId !== undefined) {
+      asignacionesQuery.where((q) => {
+        q.where('curso_id', cursoId).orWhereHas('cursos', (q2) => {
+          q2.where('cursos.id', cursoId)
+        })
+      })
+    }
+
+    const paginated = await asignacionesQuery.paginate(page, perPage)
+    const asignaciones = paginated.all()
+
+    // Armar métricas por asignación
+    const resultados = [] as any[]
+    for (const asig of asignaciones) {
+      // Determinar cursos objetivo de la asignación
+      let targetCursoIds: number[] = []
+      if (asig.cursoId) {
+        targetCursoIds = [asig.cursoId]
+      } else {
+        const rows = await db
+          .from('asignacion_cursos')
+          .where('asignacion_id', asig.id)
+          .select('curso_id')
+        targetCursoIds = rows.map((r: any) => Number(r.curso_id))
+      }
+
+      // Filtrar por el curso solicitado y por cursos del docente
+      targetCursoIds = targetCursoIds.filter((id) =>
+        (cursoId !== undefined ? id === cursoId : true) && cursoIdsDocente.includes(id)
+      )
+
+      // Si por alguna razón no hay cursos objetivo visibles para este docente, continuar
+      if (targetCursoIds.length === 0) {
+        resultados.push({
+          id: asig.id,
+          titulo: asig.titulo,
+          descripcion: asig.descripcion,
+          fechaInicio: asig.fechaInicio?.toISODate?.() ?? null,
+          fechaVencimiento: asig.fechaVencimiento?.toISODate?.() ?? null,
+          categoria: (asig as any).$preloaded?.categoria?.nombre ?? null,
+          bancoTareaId: asig.bancoTareaId,
+          cursos: [],
+          totalEstudiantes: 0,
+          entregas: 0,
+          porcentajeEntrega: 0,
+        })
+        continue
+      }
+
+      // Total estudiantes en los cursos objetivo
+      const estRow = await db
+        .from('estudiantes')
+        .whereIn('curso_id', targetCursoIds)
+        .whereNull('eliminado_en')
+        .count('* as total')
+      const totalEstudiantes = Number(estRow[0]?.total || 0)
+
+      // Entregas realizadas por estudiantes de esos cursos para esta asignación
+      const entregasRow = await db
+        .from('entregas as e')
+        .join('estudiantes as s', 'e.estudiante_id', 's.id')
+        .where('e.asignacion_id', asig.id)
+        .whereIn('s.curso_id', targetCursoIds)
+        .count('* as total')
+      const entregasCount = Number(entregasRow[0]?.total || 0)
+
+      // Calificaciones realizadas
+      const califRow = await db
+        .from('calificaciones as c')
+        .join('estudiantes as s', 'c.estudiante_id', 's.id')
+        .where('c.asignacion_id', asig.id)
+        .whereIn('s.curso_id', targetCursoIds)
+        .count('* as total')
+      const calificacionesCount = Number(califRow[0]?.total || 0)
+
+      // Determinar estado global de la asignación para el filtro
+      const now = DateTime.now()
+      const fechaVenc = asig.fechaVencimiento ? DateTime.fromJSDate(new Date(asig.fechaVencimiento.toString())) : null
+      let estadoAsignacion: 'pendiente' | 'entregada' | 'calificada' | 'vencida' = 'pendiente'
+      if (calificacionesCount > 0) estadoAsignacion = 'calificada'
+      else if (entregasCount > 0) estadoAsignacion = 'entregada'
+      else if (fechaVenc && fechaVenc < now) estadoAsignacion = 'vencida'
+
+      if (estadoRaw && estadoAsignacion !== estadoRaw) {
+        continue
+      }
+
+      let detalleCursos: any[] | undefined
+      if (detallePorCurso) {
+        detalleCursos = []
+        for (const cid of targetCursoIds) {
+          const estRowC = await db
+            .from('estudiantes')
+            .where('curso_id', cid)
+            .whereNull('eliminado_en')
+            .count('* as total')
+          const totalEstC = Number(estRowC[0]?.total || 0)
+
+          const entregasRowC = await db
+            .from('entregas as e')
+            .join('estudiantes as s', 'e.estudiante_id', 's.id')
+            .where('e.asignacion_id', asig.id)
+            .where('s.curso_id', cid)
+            .count('* as total')
+          const entregasC = Number(entregasRowC[0]?.total || 0)
+
+          detalleCursos.push({
+            cursoId: cid,
+            totalEstudiantes: totalEstC,
+            entregas: entregasC,
+            porcentajeEntrega: totalEstC > 0 ? Math.round((entregasC / totalEstC) * 100) : 0,
+          })
+        }
+      }
+
+      resultados.push({
+        id: asig.id,
+        titulo: asig.titulo,
+        descripcion: asig.descripcion,
+        fechaInicio: asig.fechaInicio?.toISODate?.() ?? null,
+        fechaVencimiento: asig.fechaVencimiento?.toISODate?.() ?? null,
+        categoria: (asig as any).$preloaded?.categoria?.nombre ?? null,
+        bancoTareaId: asig.bancoTareaId,
+        cursos: targetCursoIds,
+        estado: estadoAsignacion,
+        totalEstudiantes,
+        entregas: entregasCount,
+        porcentajeEntrega: totalEstudiantes > 0 ? Math.round((entregasCount / totalEstudiantes) * 100) : 0,
+        detallePorCurso: detalleCursos,
+      })
+    }
+
+    return response.ok({
+      asignaciones: resultados,
+      meta: {
+        page,
+        perPage,
+        total: paginated.total,
+        lastPage: paginated.lastPage,
+      },
+    })
+  }
+
+  async asignacionResumen(ctx: HttpContext) {
+    const { params, request, response } = ctx
+
+    const docente = await this.getDocenteOrFail(ctx)
+    if (!docente) return
+
+    const asignacionId = Number(params.id)
+    if (Number.isNaN(asignacionId)) {
+      return response.badRequest({ message: 'asignacionId inválido' })
+    }
+
+    const cursoIdRaw = request.input('cursoId') ?? request.qs().cursoId ?? request.input('curso_id')
+    const cursoId = cursoIdRaw !== undefined ? Number(cursoIdRaw) : undefined
+    if (cursoId !== undefined && Number.isNaN(cursoId)) {
+      return response.badRequest({ message: 'cursoId inválido' })
+    }
+
+    // Confirmar que la asignación pertenece al docente
+    const asig = await Asignacion.query().where('id', asignacionId).where('docente_id', docente.id).first()
+    if (!asig) {
+      return response.forbidden({ message: 'No tienes acceso a esta asignación' })
+    }
+
+    // Determinar cursos objetivo
+    let targetCursoIds: number[] = []
+    if (asig.cursoId) {
+      targetCursoIds = [asig.cursoId]
+    } else {
+      const rows = await db.from('asignacion_cursos').where('asignacion_id', asig.id).select('curso_id')
+      targetCursoIds = rows.map((r: any) => Number(r.curso_id))
+    }
+
+    // Limitar a los cursos del docente y curso filtrado
+    const cursoIdsDocente = await this.getDocenteCursoIds(docente.id)
+    targetCursoIds = targetCursoIds.filter((id) =>
+      (cursoId !== undefined ? id === cursoId : true) && cursoIdsDocente.includes(id)
+    )
+
+    // Métricas
+    const estRow = await db
+      .from('estudiantes')
+      .whereIn('curso_id', targetCursoIds)
+      .whereNull('eliminado_en')
+      .count('* as total')
+    const totalEstudiantes = Number(estRow[0]?.total || 0)
+
+    const entregasRow = await db
+      .from('entregas as e')
+      .join('estudiantes as s', 'e.estudiante_id', 's.id')
+      .where('e.asignacion_id', asig.id)
+      .whereIn('s.curso_id', targetCursoIds)
+      .count('* as total')
+    const entregasCount = Number(entregasRow[0]?.total || 0)
+
+    return response.ok({
+      asignacion: {
+        id: asig.id,
+        titulo: asig.titulo,
+        cursos: targetCursoIds,
+        totalEstudiantes,
+        entregas: entregasCount,
+        porcentajeEntrega: totalEstudiantes > 0 ? Math.round((entregasCount / totalEstudiantes) * 100) : 0,
+      },
+    })
+  }
+
 }

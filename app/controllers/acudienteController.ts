@@ -305,14 +305,28 @@ export default class AcudienteController {
     const ctxAny = arguments[0] as any
     const usuario = (ctxAny as any).jwtUser as Usuario | undefined
 
+    const rawId = String(params.id)
+    let targetId: number | null = null
+
+    if (rawId.toLowerCase() === 'me') {
+      if (!usuario) return response.unauthorized({ message: 'No autenticado' })
+      const me = await Acudiente.query().where('usuario_id', usuario.id).first()
+      if (!me) return response.notFound({ message: 'Acudiente no encontrado para este usuario' })
+      targetId = me.id
+    } else {
+      const n = Number(rawId)
+      if (Number.isNaN(n)) return response.badRequest({ message: 'acudienteId inválido' })
+      targetId = n
+    }
+
     if (usuario) {
-      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
+      const ok = await this.docentePuedeAccederAcudiente(usuario, targetId)
       if (!ok) {
         return response.forbidden({ message: 'Acceso denegado' })
       }
     }
 
-    const acudiente = await Acudiente.find(params.id)
+    const acudiente = await Acudiente.find(targetId)
     if (!acudiente) {
       return response.notFound({ message: 'Acudiente no encontrado' })
     }
@@ -402,14 +416,27 @@ export default class AcudienteController {
     const ctxAny = arguments[0] as any
     const usuario = (ctxAny as any).jwtUser as Usuario | undefined
 
+    const rawId = String(params.id)
+    let targetId: number | null = null
+    if (rawId.toLowerCase() === 'me') {
+      if (!usuario) return response.unauthorized({ message: 'No autenticado' })
+      const me = await Acudiente.query().where('usuario_id', usuario.id).first()
+      if (!me) return response.notFound({ message: 'Acudiente no encontrado para este usuario' })
+      targetId = me.id
+    } else {
+      const n = Number(rawId)
+      if (Number.isNaN(n)) return response.badRequest({ message: 'acudienteId inválido' })
+      targetId = n
+    }
+
     if (usuario) {
-      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
+      const ok = await this.docentePuedeAccederAcudiente(usuario, targetId)
       if (!ok) {
         return response.forbidden({ message: 'Acceso denegado' })
       }
     }
 
-    const acudiente = await Acudiente.find(params.id)
+    const acudiente = await Acudiente.find(targetId)
     if (!acudiente) {
       return response.notFound({ message: 'Acudiente no encontrado' })
     }
@@ -441,14 +468,27 @@ export default class AcudienteController {
     const ctxAny = arguments[0] as any
     const usuario = (ctxAny as any).jwtUser as Usuario | undefined
 
+    const rawId = String(params.id)
+    let targetId: number | null = null
+    if (rawId.toLowerCase() === 'me') {
+      if (!usuario) return response.unauthorized({ message: 'No autenticado' })
+      const me = await Acudiente.query().where('usuario_id', usuario.id).first()
+      if (!me) return response.notFound({ message: 'Acudiente no encontrado para este usuario' })
+      targetId = me.id
+    } else {
+      const n = Number(rawId)
+      if (Number.isNaN(n)) return response.badRequest({ message: 'acudienteId inválido' })
+      targetId = n
+    }
+
     if (usuario) {
-      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
+      const ok = await this.docentePuedeAccederAcudiente(usuario, targetId)
       if (!ok) {
         return response.forbidden({ message: 'Acceso denegado' })
       }
     }
 
-    const acudiente = await Acudiente.find(params.id)
+    const acudiente = await Acudiente.find(targetId)
     if (!acudiente) {
       return response.notFound({ message: 'Acudiente no encontrado' })
     }

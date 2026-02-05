@@ -8,5 +8,7 @@ router
     router.get('/docente/estudiantes', [DocenteScopeController, 'estudiantes'])
     router.get('/docente/acudientes', [DocenteScopeController, 'acudientes'])
     router.get('/docente/entregas', [DocenteScopeController, 'entregas'])
+    router.get('/docente/asignaciones', [DocenteScopeController, 'asignaciones'])
+    router.get('/docente/asignaciones/:id/resumen', [DocenteScopeController, 'asignacionResumen'])
   })
   .use(middleware.jwt())
