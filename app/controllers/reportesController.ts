@@ -2,6 +2,9 @@ import type { HttpContext } from '@adonisjs/core/http'
 import db from '@adonisjs/lucid/services/db'
 import Curso from '#models/curso'
 import Funcionario from '#models/funcionario'
+import Role from '#models/role'
+import Docente from '#models/docente'
+import Usuario from '#models/usuario'
 
 export default class ReportesController {
   /**
@@ -11,6 +14,24 @@ export default class ReportesController {
   async entregasPorCurso({ params, request, response }: HttpContext) {
     const cursoId = params.id
     const periodoId = request.input('periodo') || request.input('periodoId')
+    const download = String(request.input('download') ?? request.qs().download ?? '').toLowerCase()
+    const format = String(request.input('format') ?? request.qs().format ?? 'csv').toLowerCase()
+
+    // Control de acceso: si es docente, validar que el curso le pertenece
+    const jwtUser = (request as any).jwtUser || (response as any).jwtUser || ({} as Usuario)
+    if (jwtUser && (jwtUser as any).id) {
+      const rol = await Role.find((jwtUser as any).rolId)
+      const nombreRol = (rol?.nombre ?? '').toLowerCase()
+      if (nombreRol === 'docente') {
+        const docente = await Docente.query().where('usuario_id', (jwtUser as any).id).first()
+        if (!docente) return response.forbidden({ success: false, message: 'Docente no válido' })
+        const rows = await db.from('docente_curso').where('docente_id', docente.id).select('curso_id')
+        const cursoIds = rows.map((r) => Number(r.curso_id))
+        if (!cursoIds.includes(Number(cursoId))) {
+          return response.forbidden({ success: false, message: 'No tienes acceso a este curso' })
+        }
+      }
+    }
 
     const curso = await Curso.query().where('id', cursoId).preload('grado').first()
     if (!curso) {
@@ -90,6 +111,33 @@ export default class ReportesController {
         ? parseFloat((promediosCurso.reduce((a, b) => a + b, 0) / promediosCurso.length).toFixed(1))
         : 0
 
+    // Si se solicita descarga CSV
+    if (download === '1' || download === 'true') {
+      if (format !== 'csv') {
+        return response.badRequest({ success: false, message: 'Formato no soportado. Use csv' })
+      }
+
+      const header = ['Estudiante', 'TareasAsignadas', 'TareasEntregadas', 'Promedio', 'PorcentajeCumplimiento']
+      const rows = estudiantesConMetricas.map((e) => [
+        e.nombre,
+        e.tareasAsignadas,
+        e.tareasEntregadas,
+        e.promedio,
+        `${e.porcentajeCumplimiento}%`,
+      ])
+
+      const csv = [header, ...rows]
+        .map((r) => r.map((v) => (typeof v === 'string' && v.includes(',') ? `"${v}"` : v)).join(','))
+        .join('\n')
+
+      response.header('Content-Type', 'text/csv; charset=utf-8')
+      response.header(
+        'Content-Disposition',
+        `attachment; filename="reporte_entregas_curso_${cursoId}${periodoId ? `_periodo_${periodoId}` : ''}.csv"`
+      )
+      return response.send(csv)
+    }
+
     return response.ok({
       success: true,
       data: {
@@ -112,6 +160,24 @@ export default class ReportesController {
   async calificacionesPorCurso({ params, request, response }: HttpContext) {
     const cursoId = params.id
     const periodoId = request.input('periodo') || request.input('periodoId')
+    const download = String(request.input('download') ?? request.qs().download ?? '').toLowerCase()
+    const format = String(request.input('format') ?? request.qs().format ?? 'csv').toLowerCase()
+
+    // Control de acceso: si es docente, validar que el curso le pertenece
+    const jwtUser = (request as any).jwtUser || (response as any).jwtUser || ({} as Usuario)
+    if (jwtUser && (jwtUser as any).id) {
+      const rol = await Role.find((jwtUser as any).rolId)
+      const nombreRol = (rol?.nombre ?? '').toLowerCase()
+      if (nombreRol === 'docente') {
+        const docente = await Docente.query().where('usuario_id', (jwtUser as any).id).first()
+        if (!docente) return response.forbidden({ success: false, message: 'Docente no válido' })
+        const rows = await db.from('docente_curso').where('docente_id', docente.id).select('curso_id')
+        const cursoIds = rows.map((r) => Number(r.curso_id))
+        if (!cursoIds.includes(Number(cursoId))) {
+          return response.forbidden({ success: false, message: 'No tienes acceso a este curso' })
+        }
+      }
+    }
 
     const curso = await Curso.query().where('id', cursoId).preload('grado').first()
     if (!curso) {
@@ -170,6 +236,42 @@ export default class ReportesController {
       else if (e.promedio >= 3.0) distribucion.basico++
       else if (e.promedio > 0) distribucion.bajo++
     })
+
+    // Descarga CSV si se solicita
+    if (download === '1' || download === 'true') {
+      if (format !== 'csv') {
+        return response.badRequest({ success: false, message: 'Formato no soportado. Use csv' })
+      }
+
+      // CSV por estudiante con promedio y detalle de calificaciones en columnas dinámicas
+      const tareasUnicas: string[] = []
+      estudiantes.forEach((e: any) => {
+        e.calificaciones.forEach((c: any) => {
+          if (!tareasUnicas.includes(c.tarea)) tareasUnicas.push(c.tarea)
+        })
+      })
+
+      const header = ['Estudiante', ...tareasUnicas, 'Promedio']
+      const rows = (estudiantes as any[]).map((e) => {
+        const mapNotas: Record<string, number> = {}
+        e.calificaciones.forEach((c: any) => {
+          mapNotas[c.tarea] = c.nota
+        })
+        const notasPorTarea = tareasUnicas.map((t) => (t in mapNotas ? mapNotas[t] : ''))
+        return [e.nombre, ...notasPorTarea, e.promedio]
+      })
+
+      const csv = [header, ...rows]
+        .map((r) => r.map((v) => (typeof v === 'string' && v.includes(',') ? `"${v}"` : v)).join(','))
+        .join('\n')
+
+      response.header('Content-Type', 'text/csv; charset=utf-8')
+      response.header(
+        'Content-Disposition',
+        `attachment; filename="reporte_calificaciones_curso_${cursoId}${periodoId ? `_periodo_${periodoId}` : ''}.csv"`
+      )
+      return response.send(csv)
+    }
 
     return response.ok({
       success: true,

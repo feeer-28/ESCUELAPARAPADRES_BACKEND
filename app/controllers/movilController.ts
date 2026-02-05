@@ -536,7 +536,7 @@ export default class MovilController {
         })
       }
 
-      const estudianteId = params.id
+      const rawEstudianteId = params.id
 
       // Verificar que el estudiante está vinculado al acudiente
       const acudiente = await Acudiente.query()
@@ -551,7 +551,23 @@ export default class MovilController {
         })
       }
 
-      const esVinculado = acudiente.estudiantes.some((e) => e.id === Number(estudianteId))
+      // Resolver estudianteId: soportar alias 'me' y validar numérico
+      let estudianteIdResolved: number | null = null
+      if (rawEstudianteId === 'me') {
+        estudianteIdResolved = acudiente.estudiantes[0]?.id || null
+      } else {
+        const parsed = Number(rawEstudianteId)
+        estudianteIdResolved = Number.isFinite(parsed) ? parsed : null
+      }
+
+      if (!estudianteIdResolved) {
+        return response.status(400).json({
+          success: false,
+          message: 'Parámetro estudiante id inválido o no disponible',
+        })
+      }
+
+      const esVinculado = acudiente.estudiantes.some((e) => e.id === estudianteIdResolved)
       if (!esVinculado) {
         return response.status(403).json({
           success: false,
@@ -561,7 +577,7 @@ export default class MovilController {
 
       // Obtener estudiante con relaciones
       const estudiante = await Estudiante.query()
-        .where('id', estudianteId)
+        .where('id', estudianteIdResolved)
         .preload('curso', (q) => {
           q.preload('grado')
           q.preload('institucion')
@@ -604,7 +620,7 @@ export default class MovilController {
         // Contar entregas realizadas
         const entregas = await db
           .from('entregas')
-          .where('estudiante_id', estudianteId)
+          .where('estudiante_id', estudianteIdResolved)
           .whereIn(
             'asignacion_id',
             db
@@ -619,7 +635,7 @@ export default class MovilController {
         // Calcular promedio
         const calificaciones = await db
           .from('calificaciones')
-          .where('estudiante_id', estudianteId)
+          .where('estudiante_id', estudianteIdResolved)
           .where('periodo_id', periodoActivo.id)
           .whereNotNull('nota')
           .avg('nota as promedio')
@@ -694,7 +710,7 @@ export default class MovilController {
         })
       }
 
-      const estudianteId = params.id
+      const rawEstudianteId = params.id
       const periodoId = request.input('periodo')
 
       // Verificar vinculación
@@ -710,7 +726,23 @@ export default class MovilController {
         })
       }
 
-      const esVinculado = acudiente.estudiantes.some((e) => e.id === Number(estudianteId))
+      // Resolver estudianteId: soportar alias 'me' y validar numérico
+      let estudianteIdResolved: number | null = null
+      if (rawEstudianteId === 'me') {
+        estudianteIdResolved = acudiente.estudiantes[0]?.id || null
+      } else {
+        const parsed = Number(rawEstudianteId)
+        estudianteIdResolved = Number.isFinite(parsed) ? parsed : null
+      }
+
+      if (!estudianteIdResolved) {
+        return response.status(400).json({
+          success: false,
+          message: 'Parámetro estudiante id inválido o no disponible',
+        })
+      }
+
+      const esVinculado = acudiente.estudiantes.some((e) => e.id === estudianteIdResolved)
       if (!esVinculado) {
         return response.status(403).json({
           success: false,
@@ -718,7 +750,7 @@ export default class MovilController {
         })
       }
 
-      const estudiante = await Estudiante.find(estudianteId)
+      const estudiante = await Estudiante.find(estudianteIdResolved)
       if (!estudiante) {
         return response.status(404).json({
           success: false,
@@ -759,16 +791,32 @@ export default class MovilController {
         .preload('categoria')
         .orderBy('fecha_vencimiento', 'asc')
 
+      // Si no hay asignaciones, devolver respuesta vacía evitando whereIn([])
+      if (asignaciones.length === 0) {
+        return response.status(200).json({
+          success: true,
+          data: [],
+          meta: {
+            periodo: { id: periodo.id, nombre: periodo.nombre },
+            total: 0,
+            pendientes: 0,
+            entregadas: 0,
+            calificadas: 0,
+            ultimaSincronizacion: DateTime.now().toISO(),
+          },
+        })
+      }
+
       // Obtener entregas y calificaciones del estudiante
       const entregas = await Entrega.query()
-        .where('estudiante_id', estudianteId)
+        .where('estudiante_id', estudianteIdResolved)
         .whereIn(
           'asignacion_id',
           asignaciones.map((a) => a.id)
         )
 
       const calificaciones = await Calificacion.query()
-        .where('estudiante_id', estudianteId)
+        .where('estudiante_id', estudianteIdResolved)
         .whereIn(
           'asignacion_id',
           asignaciones.map((a) => a.id)
@@ -848,8 +896,10 @@ export default class MovilController {
    * HU-30: Detalle completo de una tarea/asignación
    * GET /asignaciones/:id/detalle
    */
-  async detalleAsignacion({ params, response, jwtUser }: HttpContext) {
+  async detalleAsignacion(ctx: HttpContext) {
     try {
+      const { params, response } = ctx
+      const jwtUser = (ctx as any).jwtUser || (ctx as any).authUser || (ctx as any).user
       if (!jwtUser) {
         return response.status(401).json({
           success: false,
@@ -935,11 +985,32 @@ export default class MovilController {
             : null
           const estaVencida = fechaVenc ? fechaVenc < now : false
 
+          // Parseo seguro de archivosUrl
+          const archivosParsed = (() => {
+            const raw: any = (entregaDb as any).archivosUrl
+            if (!raw) return []
+            if (Array.isArray(raw)) return raw
+            if (typeof raw === 'object') return raw
+            if (typeof raw === 'string') {
+              const s = raw.trim()
+              if (!s || s === '[object Object]') return []
+              if (s.startsWith('[') || s.startsWith('{')) {
+                try {
+                  return JSON.parse(s)
+                } catch {
+                  return []
+                }
+              }
+              return []
+            }
+            return []
+          })()
+
           entrega = {
             id: entregaDb.id,
             descripcion: entregaDb.evidenciaTexto,
             fechaEntrega: entregaDb.fechaEntrega?.toISO(),
-            archivos: entregaDb.archivosUrl ? JSON.parse(entregaDb.archivosUrl) : [],
+            archivos: archivosParsed,
             puedeEditar: !calificacionDb && !estaVencida,
           }
 
@@ -996,7 +1067,7 @@ export default class MovilController {
       })
     } catch (error) {
       console.error('Error al obtener detalle:', error)
-      return response.status(500).json({
+      return ctx.response.status(500).json({
         success: false,
         message: 'Error al procesar la solicitud',
       })
@@ -1008,8 +1079,10 @@ export default class MovilController {
    * POST /asignaciones/:id/entregas
    * Soporta: archivos multipart, URLs, y texto
    */
-  async enviarEntrega({ params, request, response, jwtUser }: HttpContext) {
+  async enviarEntrega(ctx: HttpContext) {
     try {
+      const { params, request, response } = ctx
+      const jwtUser = (ctx as any).jwtUser || (ctx as any).authUser || (ctx as any).user
       if (!jwtUser) {
         return response.status(401).json({
           success: false,
@@ -1075,9 +1148,9 @@ export default class MovilController {
       if (asignacion.cursoId && asignacion.cursoId === estudiante.cursoId) {
         asignacionCorrespondeAlCurso = true
       } else {
-        // Verificar en tabla pivot asignacion_curso
+        // Verificar en tabla pivote asignacion_cursos (plural)
         const match = await db
-          .from('asignacion_curso')
+          .from('asignacion_cursos')
           .where('asignacion_id', asignacionId)
           .where('curso_id', estudiante.cursoId)
           .first()
@@ -1246,8 +1319,22 @@ export default class MovilController {
         // Actualizar entrega existente
         if (descripcion) entrega.evidenciaTexto = descripcion
         if (archivosJson) {
-          // Combinar archivos existentes con nuevos
-          const existentes = entrega.archivosUrl ? JSON.parse(entrega.archivosUrl) : []
+          // Combinar archivos existentes con nuevos (parseo seguro)
+          const existentes = (() => {
+            const raw: any = (entrega as any).archivosUrl
+            if (!raw) return []
+            if (Array.isArray(raw)) return raw
+            if (typeof raw === 'object') return raw
+            if (typeof raw === 'string') {
+              const s = raw.trim()
+              if (!s || s === '[object Object]') return []
+              if (s.startsWith('[') || s.startsWith('{')) {
+                try { return JSON.parse(s) } catch { return [] }
+              }
+              return []
+            }
+            return []
+          })()
           const todos = [...existentes, ...combined]
           entrega.archivosUrl = JSON.stringify(todos)
         }
@@ -1299,7 +1386,21 @@ export default class MovilController {
           id: entrega.id,
           descripcion: entrega.evidenciaTexto,
           fechaEntrega: entrega.fechaEntrega?.toISO(),
-          archivos: entrega.archivosUrl ? JSON.parse(entrega.archivosUrl) : [],
+          archivos: (() => {
+            const raw: any = (entrega as any).archivosUrl
+            if (!raw) return []
+            if (Array.isArray(raw)) return raw
+            if (typeof raw === 'object') return raw
+            if (typeof raw === 'string') {
+              const s = raw.trim()
+              if (!s || s === '[object Object]') return []
+              if (s.startsWith('[') || s.startsWith('{')) {
+                try { return JSON.parse(s) } catch { return [] }
+              }
+              return []
+            }
+            return []
+          })(),
           estado: estadoEntrega,
           nombreEnvio: entrega.nombreEnvio,
         },
@@ -1394,8 +1495,22 @@ export default class MovilController {
         entrega.evidenciaTexto = descripcion
       }
 
-      // Manejar archivos
-      let archivosActuales = entrega.archivosUrl ? JSON.parse(entrega.archivosUrl) : []
+      // Manejar archivos (parseo seguro de archivosUrl)
+      let archivosActuales = (() => {
+        const raw: any = (entrega as any).archivosUrl
+        if (!raw) return []
+        if (Array.isArray(raw)) return raw
+        if (typeof raw === 'object') return raw
+        if (typeof raw === 'string') {
+          const s = raw.trim()
+          if (!s || s === '[object Object]') return []
+          if (s.startsWith('[') || s.startsWith('{')) {
+            try { return JSON.parse(s) } catch { return [] }
+          }
+          return []
+        }
+        return []
+      })()
 
       // Eliminar archivos marcados
       if (archivosEliminar.length > 0) {

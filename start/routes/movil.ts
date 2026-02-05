@@ -9,6 +9,7 @@
 
 import router from '@adonisjs/core/services/router'
 const MovilController = () => import('#controllers/movilController')
+const MovilEntregasController = () => import('#controllers/movil/entregasController')
 
 // Grupo base para endpoints móviles
 router
@@ -88,6 +89,8 @@ router
          * Output: Tareas con estado (pendiente, entregada, calificada, vencida)
          */
         router.get('/estudiantes/:id/tareas', [MovilController, 'tareasEstudiante'])
+        // Alias con prefijo /movil
+        router.get('/movil/estudiantes/:id/tareas', [MovilController, 'tareasEstudiante'])
 
         /**
          * GET /asignaciones/:id/detalle
@@ -95,13 +98,17 @@ router
          * Output: Tarea, fechas, estado, entrega (si existe), calificación
          */
         router.get('/asignaciones/:id/detalle', [MovilController, 'detalleAsignacion'])
+        // Alias con prefijo /movil
+        router.get('/movil/asignaciones/:id/detalle', [MovilController, 'detalleAsignacion'])
 
         /**
          * POST /asignaciones/:id/entregas
          * HU-31: Enviar evidencia de una tarea
          * Input: { estudianteId, descripcion, archivos[] }
          */
-        router.post('/asignaciones/:id/entregas', [MovilController, 'enviarEntrega'])
+        router.post('/asignaciones/:id/entregas', [MovilEntregasController, 'enviarEntrega'])
+        // Alias con prefijo /movil
+        router.post('/movil/asignaciones/:id/entregas', [MovilEntregasController, 'enviarEntrega'])
 
         /**
          * POST /asignaciones/:id/entregas/sync
@@ -109,13 +116,17 @@ router
          * Input: { estudianteId, descripcion, archivos[], timestampLocal }
          */
         router.post('/asignaciones/:id/entregas/sync', [MovilController, 'sincronizarEntrega'])
+        // Alias con prefijo /movil
+        router.post('/movil/asignaciones/:id/entregas/sync', [MovilController, 'sincronizarEntrega'])
 
         /**
          * PUT /entregas/:id
          * HU-33: Editar entrega antes de la fecha límite
          * Input: { descripcion?, archivosNuevos[]?, archivosEliminar[]? }
          */
-        router.put('/entregas/:id', [MovilController, 'editarEntrega'])
+        router.put('/entregas/:id', [MovilEntregasController, 'editarEntrega'])
+        // Alias con prefijo /movil
+        router.put('/movil/entregas/:id', [MovilEntregasController, 'editarEntrega'])
 
         /**
          * GET /estudiantes/:id/tareas/sync
