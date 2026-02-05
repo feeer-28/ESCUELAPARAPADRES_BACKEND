@@ -5,13 +5,51 @@ import hash from '@adonisjs/core/services/hash'
 import db from '@adonisjs/lucid/services/db'
 import jwt from 'jsonwebtoken'
 
+import Acudiente from '#models/acudiente'
 import Curso from '#models/curso'
 import Docente from '#models/docente'
+import Estudiante from '#models/estudiante'
 import Role from '#models/role'
 import Usuario from '#models/usuario'
 import env from '#start/env'
 
 export default class DocenteController {
+  private async getDocenteCursoIds(usuario: Usuario): Promise<number[] | null> {
+    const rol = await Role.find(usuario.rolId)
+    const nombreRol = (rol?.nombre ?? '').toLowerCase()
+    if (nombreRol !== 'docente') {
+      return null
+    }
+
+    const docente = await Docente.query().where('usuario_id', usuario.id).first()
+    if (!docente) {
+      return []
+    }
+
+    const rows = await db.from('docente_curso').where('docente_id', docente.id).select('curso_id')
+    const cursoIds = rows.map((r) => Number(r.curso_id)).filter((id) => !Number.isNaN(id))
+    return [...new Set(cursoIds)]
+  }
+
+  private async docentePuedeAccederAcudiente(usuario: Usuario, acudienteId: number): Promise<boolean> {
+    const cursoIds = await this.getDocenteCursoIds(usuario)
+    if (!Array.isArray(cursoIds)) {
+      return true
+    }
+
+    if (!cursoIds.length) {
+      return false
+    }
+
+    const row = await db
+      .from('estudiante_acudiente as ea')
+      .join('estudiantes', 'ea.estudiante_id', 'estudiantes.id')
+      .where('ea.acudiente_id', acudienteId)
+      .whereIn('estudiantes.curso_id', cursoIds)
+      .first()
+
+    return Boolean(row)
+  }
   async login({ request, response }: HttpContext) {
     const correo = String(request.input('correo') ?? '').trim()
     const contrasena = String(request.input('contrasena') ?? '').trim()
@@ -91,9 +129,14 @@ export default class DocenteController {
       return response.badRequest({ message: 'cursoIds debe ser un arreglo de ids' })
     }
 
-    if (!correo || !contrasena || !telefono || !numeroDocumento) {
-      return response.badRequest({ message: 'correo, contrasena, telefono y numeroDocumento son requeridos' })
+    if (!correo || !telefono || !numeroDocumento) {
+      return response.badRequest({ message: 'correo, telefono y numeroDocumento son requeridos' })
     }
+
+    // Contraseña: usar la enviada o generar temporal
+    const passwordTemporal = `Docente${new Date().getFullYear()}!`
+    const passwordFinal = contrasena || passwordTemporal
+    const usaPasswordTemporal = !contrasena
 
     if (Array.isArray(cursoIds) && cursoIds.length) {
       const cursos = await Curso.query().whereIn('id', cursoIds)
@@ -131,9 +174,9 @@ export default class DocenteController {
       const usuario = await Usuario.create(
         {
           correo,
-          contrasenaHash: contrasena,
+          contrasenaHash: passwordFinal,
           estaActivo: true,
-          debeCambiarContrasena: true,
+          debeCambiarContrasena: usaPasswordTemporal, // Solo si usa temporal
           rolId: rolDocente.id,
         },
         { client: trx }
@@ -169,6 +212,8 @@ export default class DocenteController {
     return response.created({
       docente: result.docente,
       usuario: { id: result.usuario.id, correo: result.usuario.correo },
+      passwordTemporal: usaPasswordTemporal ? passwordFinal : undefined,
+      debeCambiarContrasena: usaPasswordTemporal,
     })
   }
 
@@ -209,5 +254,206 @@ export default class DocenteController {
 
     await docente.delete()
     return response.ok({ message: 'Docente eliminado' })
+  }
+
+  // ========================================
+  // GESTIÓN DE ESTUDIANTES (EDICIÓN LIMITADA)
+  // ========================================
+
+  /**
+   * Listar estudiantes de los cursos del docente
+   * GET /docentes/estudiantes
+   */
+  async listarEstudiantes({ response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    const cursoIds = usuario ? await this.getDocenteCursoIds(usuario) : null
+
+    const query = Estudiante.query().orderBy('id', 'desc')
+    if (Array.isArray(cursoIds)) {
+      if (!cursoIds.length) {
+        return response.ok([])
+      }
+      query.whereIn('curso_id', cursoIds)
+    }
+
+    const estudiantes = await query
+    return response.ok(estudiantes)
+  }
+
+  /**
+   * Ver un estudiante específico (solo si pertenece a sus cursos)
+   * GET /docentes/estudiantes/:id
+   */
+  async verEstudiante({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    const estudiante = await Estudiante.find(params.id)
+    if (!estudiante) {
+      return response.notFound({ message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ message: 'Acceso denegado' })
+      }
+    }
+
+    return response.ok(estudiante)
+  }
+
+  /**
+   * Editar información de un estudiante (solo si pertenece a sus cursos)
+   * PUT /docentes/estudiantes/:id
+   */
+  async editarEstudiante({ params, request, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    const estudiante = await Estudiante.find(params.id)
+    if (!estudiante) {
+      return response.notFound({ message: 'Estudiante no encontrado' })
+    }
+
+    if (usuario) {
+      const cursoIds = await this.getDocenteCursoIds(usuario)
+      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
+        return response.forbidden({ message: 'Acceso denegado: este estudiante no pertenece a tus cursos' })
+      }
+    }
+
+    const payload = request.only([
+      'nombres',
+      'apellidos',
+      'tipoDocumento',
+      'numeroDocumento',
+      'fechaNacimiento',
+      'sexo',
+      'grupoSanguineo',
+      'rh',
+      'paisNacimiento',
+      'ciudadNacimiento',
+      'estrato',
+      'etnia',
+      'eps',
+    ])
+
+    estudiante.merge(payload)
+    await estudiante.save()
+
+    return response.ok({
+      message: 'Estudiante actualizado correctamente',
+      estudiante
+    })
+  }
+
+  // ========================================
+  // GESTIÓN DE ACUDIENTES (EDICIÓN LIMITADA)
+  // ========================================
+
+  /**
+   * Listar acudientes de los estudiantes de los cursos del docente
+   * GET /docentes/acudientes
+   */
+  async listarAcudientes({ response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    if (!usuario) {
+      const acudientes = await Acudiente.query().orderBy('id', 'desc')
+      return response.ok(acudientes)
+    }
+
+    const cursoIds = await this.getDocenteCursoIds(usuario)
+    if (Array.isArray(cursoIds)) {
+      if (!cursoIds.length) {
+        return response.ok([])
+      }
+
+      const acudientes = await db
+        .from('acudientes')
+        .join('estudiante_acudiente as ea', 'acudientes.id', 'ea.acudiente_id')
+        .join('estudiantes', 'ea.estudiante_id', 'estudiantes.id')
+        .whereIn('estudiantes.curso_id', cursoIds)
+        .distinct('acudientes.*')
+        .orderBy('acudientes.id', 'desc')
+
+      return response.ok(acudientes)
+    }
+
+    const acudientes = await Acudiente.query().orderBy('id', 'desc')
+    return response.ok(acudientes)
+  }
+
+  /**
+   * Ver un acudiente específico (solo si está relacionado con estudiantes de sus cursos)
+   * GET /docentes/acudientes/:id
+   */
+  async verAcudiente({ params, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    if (usuario) {
+      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
+      if (!ok) {
+        return response.forbidden({ message: 'Acceso denegado: este acudiente no está relacionado con tus estudiantes' })
+      }
+    }
+
+    const acudiente = await Acudiente.find(params.id)
+    if (!acudiente) {
+      return response.notFound({ message: 'Acudiente no encontrado' })
+    }
+
+    return response.ok(acudiente)
+  }
+
+  /**
+   * Editar información de un acudiente (solo si está relacionado con estudiantes de sus cursos)
+   * PUT /docentes/acudientes/:id
+   */
+  async editarAcudiente({ params, request, response }: HttpContext) {
+    const ctxAny = arguments[0] as any
+    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
+
+    if (usuario) {
+      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
+      if (!ok) {
+        return response.forbidden({ message: 'Acceso denegado: este acudiente no está relacionado con tus estudiantes' })
+      }
+    }
+
+    const acudiente = await Acudiente.find(params.id)
+    if (!acudiente) {
+      return response.notFound({ message: 'Acudiente no encontrado' })
+    }
+
+    const payload = request.only([
+      'nombres',
+      'apellidos',
+      'tipoDocumento',
+      'numeroDocumento',
+      'telefono',
+      'telefonoAlternativo',
+      'correo',
+      'direccion',
+      'parentesco',
+      'ocupacion',
+      'tipoTrabajo',
+      'nivelEducativo',
+      'aportaEconomia',
+      'horarioTrabajo',
+    ])
+
+    acudiente.merge(payload)
+    await acudiente.save()
+
+    return response.ok({
+      message: 'Acudiente actualizado correctamente',
+      acudiente
+    })
   }
 }
