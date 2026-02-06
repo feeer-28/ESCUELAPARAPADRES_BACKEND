@@ -186,6 +186,45 @@ export default class MovilEntregasController {
         .where('estudiante_id', estudianteId)
         .first()
 
+      // Si ya existe una entrega, no permitir re-subir; devolver estado de la entrega
+      if (entrega) {
+        const fechaLimite = asignacion.fechaVencimiento || null
+        const fechaEnt = entrega.fechaEntrega || DateTime.now()
+        let estadoExistente = 'entregada'
+        if (fechaLimite && fechaEnt > fechaLimite) {
+          estadoExistente = 'entregada_tardia'
+        }
+
+        const archivosExistentes = (() => {
+          const raw: any = (entrega as any).archivosUrl
+          if (!raw) return []
+          if (Array.isArray(raw)) return raw
+          if (typeof raw === 'object') return raw
+          if (typeof raw === 'string') {
+            const s = raw.trim()
+            if (!s || s === '[object Object]') return []
+            if (s.startsWith('[') || s.startsWith('{')) {
+              try { return JSON.parse(s) } catch { return [] }
+            }
+            return []
+          }
+          return []
+        })()
+
+        return response.status(409).json({
+          success: false,
+          message: 'Ya registraste una entrega para esta asignación',
+          data: {
+            id: entrega.id,
+            descripcion: entrega.evidenciaTexto,
+            fechaEntrega: entrega.fechaEntrega?.toISO(),
+            archivos: archivosExistentes,
+            estado: estadoExistente,
+            nombreEnvio: entrega.nombreEnvio,
+          },
+        })
+      }
+
       // ========== PROCESAR URLs DE ARCHIVOS (si vienen como string/array) ==========
       let archivosPayload: any[] = []
       if (archivosUrl) {
