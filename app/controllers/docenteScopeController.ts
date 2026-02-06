@@ -170,16 +170,26 @@ export default class DocenteScopeController {
     const cursoIdRaw = request.input('cursoId') ?? request.qs().cursoId ?? request.input('curso_id')
     const asignacionIdRaw =
       request.input('asignacionId') ?? request.qs().asignacionId ?? request.input('asignacion_id')
+    const sortRaw = (request.input('sort') ?? request.qs().sort ?? '').toString().trim().toLowerCase()
+    const pageRaw = request.input('page') ?? request.qs().page
+    const perPageRaw = request.input('perPage') ?? request.qs().perPage
 
     const cursoId = cursoIdRaw !== undefined ? Number(cursoIdRaw) : undefined
     const asignacionId = asignacionIdRaw !== undefined ? Number(asignacionIdRaw) : undefined
+    const page = pageRaw !== undefined ? Math.max(1, Number(pageRaw)) : 1
+    const perPage = perPageRaw !== undefined ? Math.max(1, Math.min(100, Number(perPageRaw))) : 20
 
     if (cursoId !== undefined && Number.isNaN(cursoId)) {
       return response.badRequest({ message: 'cursoId inválido' })
     }
-
     if (asignacionId !== undefined && Number.isNaN(asignacionId)) {
       return response.badRequest({ message: 'asignacionId inválido' })
+    }
+    if (pageRaw !== undefined && Number.isNaN(page)) {
+      return response.badRequest({ message: 'page inválido' })
+    }
+    if (perPageRaw !== undefined && Number.isNaN(perPage)) {
+      return response.badRequest({ message: 'perPage inválido' })
     }
 
     const soloPendientes = String(request.input('soloPendientes') ?? request.qs().soloPendientes ?? 'true')
@@ -205,7 +215,7 @@ export default class DocenteScopeController {
     const asignacionIds = asignaciones.map((a) => a.id)
 
     if (!asignacionIds.length) {
-      return response.ok({ entregas: [] })
+      return response.ok({ entregas: [], meta: { total: 0, page, perPage, lastPage: 0 } })
     }
 
     const entregasQuery = Entrega.query()
@@ -214,15 +224,104 @@ export default class DocenteScopeController {
       .preload('estudiante')
       .preload('acudiente')
       .preload('calificacion')
-      .orderBy('id', 'desc')
+
+    // Sort admitido: fechaEntrega asc|desc, id asc|desc (default: fechaEntrega desc)
+    const sortMap: Record<string, { col: string; dir: 'asc' | 'desc' }> = {
+      'fechaentrega:asc': { col: 'fecha_entrega', dir: 'asc' },
+      'fechaentrega:desc': { col: 'fecha_entrega', dir: 'desc' },
+      'id:asc': { col: 'id', dir: 'asc' },
+      'id:desc': { col: 'id', dir: 'desc' },
+    }
+    const sortConf = sortMap[sortRaw] ?? sortMap['fechaentrega:desc']
+    entregasQuery.orderBy(sortConf.col as any, sortConf.dir)
 
     if (onlyPending) {
       entregasQuery.where('estado', 'enviada').whereDoesntHave('calificacion')
     }
 
-    const entregas = await entregasQuery
+    const paginated = await entregasQuery.paginate(page, perPage)
+    const rows = paginated.all()
 
-    return response.ok({ entregas })
+    // Normalizar archivos y campos calculados por entrega
+    const parseArchivos = (raw: any): Array<{ url: string; fileName: string; mimeType: string }> => {
+      const ensureArray = (): any[] => {
+        if (!raw) return []
+        if (Array.isArray(raw)) return raw
+        if (typeof raw === 'object') return [raw]
+        if (typeof raw === 'string') {
+          const s = raw.trim()
+          if (!s || s === '[object Object]') return []
+          try {
+            const parsed = JSON.parse(s)
+            if (Array.isArray(parsed)) return parsed
+            if (parsed && typeof parsed === 'object') return [parsed]
+            return []
+          } catch {
+            return []
+          }
+        }
+        return []
+      }
+      const arr = ensureArray()
+      return arr
+        .map((a: any) => ({
+          url: String(a.url ?? a.path ?? ''),
+          fileName: String(a.fileName ?? a.name ?? a.originalName ?? '').slice(0, 120),
+          mimeType: String(a.mimeType ?? a.mimetype ?? a.type ?? ''),
+        }))
+        .filter((a) => a.url)
+    }
+
+    const clamp = (n: number) => Math.max(1.0, Math.min(5.0, Number(n.toFixed(1))))
+
+    const data = rows.map((e) => {
+      const fechaVenc = (e as any).$preloaded?.asignacion?.fechaVencimiento
+        ? DateTime.fromJSDate(new Date((e as any).$preloaded.asignacion.fechaVencimiento.toString()))
+        : null
+      const fechaEnt = e.fechaEntrega ? DateTime.fromJSDate(new Date(e.fechaEntrega.toString())) : null
+      let diasTarde = 0
+      if (fechaVenc && fechaEnt) {
+        const diffDays = Math.ceil(fechaEnt.diff(fechaVenc, 'days').days)
+        diasTarde = Math.max(0, diffDays)
+      }
+      const entregadoATiempo = diasTarde === 0
+      const calificacionSugerida = clamp(5.0 - 0.1 * diasTarde)
+
+      const archivos = parseArchivos((e as any).archivosUrl)
+
+      const estudiante = (e as any).$preloaded?.estudiante
+      const estudianteNombre = estudiante
+        ? `${estudiante.nombres ?? ''} ${estudiante.apellidos ?? ''}`.trim()
+        : undefined
+
+      const asignacion = (e as any).$preloaded?.asignacion
+
+      return {
+        ...e.serialize(),
+        archivos,
+        estudianteNombre,
+        asignacion: asignacion
+          ? {
+              id: asignacion.id,
+              titulo: asignacion.titulo,
+              fechaVencimiento: asignacion.fechaVencimiento,
+            }
+          : null,
+        entregadoATiempo,
+        diasTarde,
+        calificacionSugerida,
+      }
+    })
+
+    return response.ok({
+      entregas: data,
+      meta: {
+        total: paginated.total,
+        page: paginated.currentPage,
+        perPage: paginated.perPage,
+        lastPage: paginated.lastPage,
+      },
+    })
   }
 
   async asignaciones(ctx: HttpContext) {
@@ -471,6 +570,54 @@ export default class DocenteScopeController {
       .count('* as total')
     const entregasCount = Number(entregasRow[0]?.total || 0)
 
+    // Calificaciones (conteo global)
+    const califRow = await db
+      .from('calificaciones as c')
+      .join('estudiantes as s', 'c.estudiante_id', 's.id')
+      .where('c.asignacion_id', asig.id)
+      .whereIn('s.curso_id', targetCursoIds)
+      .count('* as total')
+    const calificacionesCount = Number(califRow[0]?.total || 0)
+
+    // Detalle por curso (incluye calificaciones por curso)
+    const cursosDB = await Curso.query().whereIn('id', targetCursoIds)
+    const cursosMap = new Map<number, Curso>()
+    for (const c of cursosDB) cursosMap.set(c.id, c)
+
+    const detallePorCurso: any[] = []
+    for (const cid of targetCursoIds) {
+      const estRowC = await db
+        .from('estudiantes')
+        .where('curso_id', cid)
+        .whereNull('eliminado_en')
+        .count('* as total')
+      const totalEstC = Number(estRowC[0]?.total || 0)
+
+      const entregasRowC = await db
+        .from('entregas as e')
+        .join('estudiantes as s', 'e.estudiante_id', 's.id')
+        .where('e.asignacion_id', asig.id)
+        .where('s.curso_id', cid)
+        .count('* as total')
+      const entregasC = Number(entregasRowC[0]?.total || 0)
+
+      const califRowC = await db
+        .from('calificaciones as c')
+        .join('estudiantes as s', 'c.estudiante_id', 's.id')
+        .where('c.asignacion_id', asig.id)
+        .where('s.curso_id', cid)
+        .count('* as total')
+      const calificacionesC = Number(califRowC[0]?.total || 0)
+
+      detallePorCurso.push({
+        cursoId: cid,
+        cursoNombre: cursosMap.get(cid)?.nombre ?? null,
+        totalEstudiantes: totalEstC,
+        entregas: entregasC,
+        calificaciones: calificacionesC,
+      })
+    }
+
     return response.ok({
       asignacion: {
         id: asig.id,
@@ -478,8 +625,10 @@ export default class DocenteScopeController {
         cursos: targetCursoIds,
         totalEstudiantes,
         entregas: entregasCount,
+        calificaciones: calificacionesCount,
         porcentajeEntrega: totalEstudiantes > 0 ? Math.round((entregasCount / totalEstudiantes) * 100) : 0,
       },
+      detallePorCurso,
     })
   }
 

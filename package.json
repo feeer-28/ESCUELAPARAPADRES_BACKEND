@@ -51,6 +51,7 @@
     "@adonisjs/core": "^6.18.0",
     "@adonisjs/cors": "^2.2.1",
     "@adonisjs/lucid": "^21.8.1",
+    "@adonisjs/static": "^1.1.1",
     "@adonisjs/tsconfig": "^1.4.0",
     "@swc/core": "1.11.24",
     "@vinejs/vine": "^3.0.1",

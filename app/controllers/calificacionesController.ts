@@ -23,9 +23,8 @@ function computeNotaAutomatica(asignacion: Asignacion, entregaFecha: DateTime) {
   const due = asignacion.fechaVencimiento.startOf('day')
   const delivered = entregaFecha.startOf('day')
 
-  const daysLate = Math.max(0, Math.floor(delivered.diff(due, 'days').days))
-  const steps = Math.floor(daysLate / 10)
-  const nota = 5.0 - steps * 0.1
+  const daysLate = Math.max(0, Math.ceil(delivered.diff(due, 'days').days))
+  const nota = 5.0 - 0.1 * daysLate
 
   return clampNota(Math.round(nota * 10) / 10)
 }

@@ -28,8 +28,7 @@ import NotificationService from '#services/notification_service'
 
 
 export default class AsignacionesController {
-<<<<<<< Updated upstream
-=======
+ 
   private async enviarNotificacionesAsignacion(asignacion: Asignacion, cursoIds: number[]) {
     try {
       const estudiantes = await Estudiante.query()
@@ -212,7 +211,7 @@ export default class AsignacionesController {
       total: asignacionesCreadas.length,
     })
   }
->>>>>>> Stashed changes
+
 
   async store(ctx: HttpContext) {
 
@@ -353,35 +352,6 @@ export default class AsignacionesController {
     } else {
 
       const docenteIdFromBody = request.input('docenteId') ?? request.input('docente_id')
-<<<<<<< Updated upstream
-
-      if (!docenteIdFromBody) {
-
-        return response.badRequest({
-
-          message: 'docenteId es requerido cuando el rol es orientador',
-
-        })
-
-      }
-
-      docenteId = Number(docenteIdFromBody)
-
-      if (Number.isNaN(docenteId)) {
-
-        return response.badRequest({ message: 'docenteId inválido' })
-
-      }
-
-
-
-      const docente = await Docente.find(docenteId)
-
-      if (!docente) {
-
-        return response.badRequest({ message: 'El docenteId no existe' })
-
-=======
       if (docenteIdFromBody !== undefined && docenteIdFromBody !== null && docenteIdFromBody !== '') {
         docenteId = Number(docenteIdFromBody)
         if (Number.isNaN(docenteId)) {
@@ -434,7 +404,6 @@ export default class AsignacionesController {
         if (!docente) {
           return response.badRequest({ message: 'El docente inferido no existe' })
         }
->>>>>>> Stashed changes
       }
 
     }
@@ -514,78 +483,7 @@ export default class AsignacionesController {
 
 
     // Enviar notificaciones push a los acudientes de los estudiantes
-<<<<<<< Updated upstream
-
-    try {
-
-      // Obtener todos los estudiantes de los cursos asignados
-
-      const estudiantes = await Estudiante.query()
-
-        .whereIn('curso_id', ids)
-
-        .preload('acudientes', (query) => {
-
-          query.preload('usuario')
-
-        })
-
-
-
-      // Recolectar IDs únicos de usuarios acudientes
-
-      const acudienteUserIds = new Set<number>()
-
-      estudiantes.forEach((estudiante) => {
-
-        estudiante.acudientes.forEach((acudiente) => {
-
-          if (acudiente.usuarioId) {
-
-            acudienteUserIds.add(acudiente.usuarioId)
-
-          }
-
-        })
-
-      })
-
-
-
-      if (acudienteUserIds.size > 0) {
-
-        await NotificationService.sendToMultipleUsers(
-
-          Array.from(acudienteUserIds),
-
-          'Nueva tarea asignada',
-
-          `Se ha asignado la tarea: ${asignacion.titulo}`,
-
-          {
-
-            type: 'nueva_tarea',
-
-            asignacionId: asignacion.id.toString(),
-
-            titulo: asignacion.titulo,
-
-          }
-
-        )
-
-      }
-
-    } catch (notifError) {
-
-      console.error('Error al enviar notificaciones:', notifError)
-
-      // No fallar la creación de asignación si las notificaciones fallan
-
-    }
-=======
     await this.enviarNotificacionesAsignacion(asignacion, ids)
->>>>>>> Stashed changes
 
 
 
