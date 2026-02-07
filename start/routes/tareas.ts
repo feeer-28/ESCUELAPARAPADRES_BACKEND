@@ -4,4 +4,5 @@ import TareasController from '#controllers/tareasController'
 
 router.get('/tareas', [TareasController, 'index']).use(middleware.jwt())
 router.get('/tareas/:id', [TareasController, 'show']).use(middleware.jwt())
+router.get('/tareas/:id/archivo', [TareasController, 'descargarArchivo']).use(middleware.jwt())
 router.post('/tareas', [TareasController, 'store']).use(middleware.jwt())
