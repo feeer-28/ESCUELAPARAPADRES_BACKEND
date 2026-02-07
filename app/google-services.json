@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "990408336903",
+    "project_id": "catedra-familia-movil",
+    "storage_bucket": "catedra-familia-movil.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:990408336903:android:feb6ac86748d69d0032ca2",
+        "android_client_info": {
+          "package_name": "com.example.catedra_fam"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaRQVW98K4DaP8jAFBsOQWt0ms0tsBJf8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

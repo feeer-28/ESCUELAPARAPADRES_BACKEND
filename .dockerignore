@@ -1,0 +1,108 @@
+# ==========================================
+# DOCKERIGNORE - ARCHIVOS A EXCLUIR
+# ==========================================
+
+# Node.js
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# AdonisJS
+.env
+.env.*
+!.env.example
+
+# Logs
+logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+.env.test
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# next.js build output
+.next
+
+# nuxt.js build output
+.nuxt
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentación
+*.md
+docs/
+
+# Scripts temporales
+test_*.js
+execute_sql.js
+create_categorias.js
+setup_database.sql
+
+ejecutar_prueba_real.mjs
+check_table_structure.ts
+prueba_notificaciones_simple.js
+prueba_notificaciones_tareas.js
+test_supabase_connection.ts
+
+# Archivos de prueba
+verification_report.md
+ENDPOINTS_MOVILES_COMPLETOS.md
+IMPLEMENTACION_PANEL_RECTOR.md
