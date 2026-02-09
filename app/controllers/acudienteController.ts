@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken'
 import Acudiente from '#models/acudiente'
 import Asignacion from '#models/asignacion'
 import Docente from '#models/docente'
+import Funcionario from '#models/funcionario'
 import Role from '#models/role'
 import Usuario from '#models/usuario'
 import env from '#start/env'
@@ -377,6 +378,22 @@ export default class AcudienteController {
     const usuarioExistente = await Usuario.query().where('correo', telefono).first()
     if (usuarioExistente) {
       return response.conflict({ message: 'Ya existe un usuario con ese telefono (correo)' })
+    }
+
+    // Validar jerarquía: si se proporciona institucionId, debe existir un rector
+    const institucionId = request.input('institucionId') ?? request.input('institucion_id')
+    if (institucionId) {
+      const tieneRector = await Funcionario.query()
+        .where('institucion_id', institucionId)
+        .where('rol_id', 2)
+        .first()
+
+      if (!tieneRector) {
+        return response.status(400).json({
+          success: false,
+          message: 'Debe crear primero un rector para la institución antes de asignar acudientes',
+        })
+      }
     }
 
     const usuario = await Usuario.create({

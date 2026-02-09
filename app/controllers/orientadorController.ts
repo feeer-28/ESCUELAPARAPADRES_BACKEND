@@ -139,6 +139,21 @@ export default class OrientadorController {
       institucionId = funcionario?.institucionId || null
     }
 
+    // Validar que exista rector en la institución antes de crear orientador
+    if (institucionId) {
+      const tieneRector = await Funcionario.query()
+        .where('institucion_id', institucionId)
+        .where('rol_id', 2)
+        .first()
+
+      if (!tieneRector) {
+        return response.status(400).json({
+          success: false,
+          message: 'Debe crear primero un rector para la institución antes de asignar orientadores',
+        })
+      }
+    }
+
     const orientadorRolId = await this.getOrientadorRoleId()
     if (!orientadorRolId) {
       return response.internalServerError({
