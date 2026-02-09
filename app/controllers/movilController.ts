@@ -1853,11 +1853,9 @@ export default class MovilController {
   // ============================================================
 
   /**
-   * HU-38: Registrar token FCM
-   * POST /notificaciones/token
    * HU-38: Registrar token FCM para push notifications
    * POST /api/movil/notificaciones/token
-   * Input: { fcmToken, dispositivo?, sistemaOperativo? }
+   * Input: { fcmToken, dispositivo?, sistemaOperativo?, versionApp? }
    */
   async registrarTokenFCM({ request, response, jwtUser }: HttpContext) {
     try {
@@ -1867,7 +1865,7 @@ export default class MovilController {
           message: 'No autenticado',
         })
       }
-    try {      
+      
       const payload = request.only([
         'fcmToken',
         'dispositivo', 
@@ -1875,9 +1873,6 @@ export default class MovilController {
         'versionApp'
       ])
 
-      const fcmToken = request.input('fcmToken')
-      const dispositivo = request.input('dispositivo')
-      const sistemaOperativo = request.input('sistemaOperativo')
       // Validación
       await validator.validate({
         schema: schema.create({
@@ -1889,23 +1884,12 @@ export default class MovilController {
         data: payload,
       })
 
-      if (!fcmToken) {
-        return response.status(400).json({
-          success: false,
-          message: 'fcmToken es requerido',
-        })
-      }
       // Verificar si ya existe el token para este usuario
       const tokenExistente = await db.from('dispositivos_moviles')
         .where('usuario_id', jwtUser.id)
         .where('token_fcm', payload.fcmToken)
         .first()
 
-      const usuario = await Usuario.find(jwtUser.id)
-      if (!usuario) {
-        return response.status(404).json({
-          success: false,
-          message: 'Usuario no encontrado',
       if (tokenExistente) {
         // Actualizar token existente
         await db.from('dispositivos_moviles')
@@ -1925,15 +1909,18 @@ export default class MovilController {
         })
       }
 
-      usuario.tokenFcm = fcmToken
-      await usuario.save()
+      // Actualizar usuario con token FCM
+      const usuario = await Usuario.find(jwtUser.id)
+      if (usuario) {
+        usuario.tokenFcm = payload.fcmToken
+        await usuario.save()
+      }
+
       // Desactivar tokens anteriores del mismo usuario
       await db.from('dispositivos_moviles')
         .where('usuario_id', jwtUser.id)
         .update({ activo: false })
 
-      // Log del dispositivo (opcional - para debugging)
-      console.log(`[FCM] Token registrado para usuario ${usuario.id}: ${dispositivo} - ${sistemaOperativo}`)
       // Insertar nuevo token
       await db.table('dispositivos_moviles').insert({
         usuario_id: jwtUser.id,
@@ -1946,15 +1933,14 @@ export default class MovilController {
         actualizado_en: DateTime.now().toSQL()
       })
 
-      return response.status(200).json({
+      console.log(`[FCM] Token registrado para usuario ${jwtUser.id}`)
+
       return response.status(201).json({
         success: true,
-        message: 'Token registrado correctamente',
         message: 'Token FCM registrado exitosamente',
         data: { tokenRegistrado: true }
       })
     } catch (error) {
-      console.error('Error al registrar token:', error)
       console.error('Error al registrar token FCM:', error)
       return response.status(500).json({
         success: false,

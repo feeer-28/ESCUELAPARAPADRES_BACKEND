@@ -433,6 +433,19 @@ export default class AdminSistemaController {
         })
       }
 
+      // Verificar que exista un rector en la institución antes de crear orientador
+      const tieneRector = await Funcionario.query()
+        .where('institucion_id', institucionId)
+        .where('rol_id', 2)
+        .first()
+
+      if (!tieneRector) {
+        return response.status(400).json({
+          success: false,
+          message: 'Debe crear primero un rector para la institución antes de asignar orientadores',
+        })
+      }
+
       // Verificar que el correo no esté registrado
       const existeCorreo = await Usuario.findBy('correo', correo)
       if (existeCorreo) {
@@ -557,6 +570,29 @@ export default class AdminSistemaController {
             success: false,
             message: 'Institución no encontrada',
           })
+        }
+
+        // Verificar jerarquía: para roles 3, 4, 5, 6 debe existir un rector
+        if ([3, 4, 5, 6].includes(Number(rolId))) {
+          const tieneRector = await Funcionario.query()
+            .where('institucion_id', institucionId)
+            .where('rol_id', 2)
+            .first()
+
+          if (!tieneRector) {
+            const rolesMap: { [key: number]: string } = {
+              3: 'coordinadores',
+              4: 'orientadores',
+              5: 'docentes',
+              6: 'acudientes',
+            }
+            const rolNombre = rolesMap[Number(rolId)] || 'este rol'
+
+            return response.status(400).json({
+              success: false,
+              message: `Debe crear primero un rector para la institución antes de asignar ${rolNombre}`,
+            })
+          }
         }
       }
 

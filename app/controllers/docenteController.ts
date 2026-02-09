@@ -9,6 +9,7 @@ import Acudiente from '#models/acudiente'
 import Curso from '#models/curso'
 import Docente from '#models/docente'
 import Estudiante from '#models/estudiante'
+import Funcionario from '#models/funcionario'
 import Role from '#models/role'
 import Usuario from '#models/usuario'
 import env from '#start/env'
@@ -168,6 +169,22 @@ export default class DocenteController {
     const usuarioExistente = await Usuario.query().where('correo', correo).first()
     if (usuarioExistente) {
       return response.conflict({ message: 'Este usuario ya existe: el correo ya está registrado' })
+    }
+
+    // Validar que exista rector en la institución antes de crear docente
+    const institucionId = request.input('institucionId') ?? request.input('institucion_id')
+    if (institucionId) {
+      const tieneRector = await Funcionario.query()
+        .where('institucion_id', institucionId)
+        .where('rol_id', 2)
+        .first()
+
+      if (!tieneRector) {
+        return response.status(400).json({
+          success: false,
+          message: 'Debe crear primero un rector para la institución antes de asignar docentes',
+        })
+      }
     }
 
     const result = await db.transaction(async (trx) => {

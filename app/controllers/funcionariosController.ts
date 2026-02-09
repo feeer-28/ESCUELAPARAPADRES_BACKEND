@@ -67,6 +67,29 @@
        if (!institucion) {
          return response.badRequest({ message: 'El institucionId no existe' })
        }
+
+       // Validar jerarquía: para roles 3, 4, 5, 6 debe existir un rector
+       if ([3, 4, 5, 6].includes(rolId)) {
+         const tieneRector = await Funcionario.query()
+           .where('institucion_id', institucionId)
+           .where('rol_id', 2)
+           .first()
+
+         if (!tieneRector) {
+           const rolesMap: { [key: number]: string } = {
+             3: 'coordinadores',
+             4: 'orientadores',
+             5: 'docentes',
+             6: 'acudientes',
+           }
+           const rolNombre = rolesMap[rolId] || 'este rol'
+
+           return response.status(400).json({
+             success: false,
+             message: `Debe crear primero un rector para la institución antes de asignar ${rolNombre}`,
+           })
+         }
+       }
      }
 
      if (usuarioId === null && (!correo || !contrasena)) {
