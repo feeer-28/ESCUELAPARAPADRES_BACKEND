@@ -1,6 +1,7 @@
 import router from '@adonisjs/core/services/router'
 import { middleware } from '#start/kernel'
 import OrientadorController from '#controllers/orientadorController'
+import DocenteController from '#controllers/docenteController'
 
 // CRUD Orientadores - Todas requieren JWT
 router.get('/orientadores', [OrientadorController, 'index']).use(middleware.jwt())
@@ -19,3 +20,8 @@ router.get('/orientadores/:id', [OrientadorController, 'show']).use(middleware.j
 router.post('/orientadores', [OrientadorController, 'store']).use(middleware.jwt())
 router.put('/orientadores/:id', [OrientadorController, 'update']).use(middleware.jwt())
 router.delete('/orientadores/:id', [OrientadorController, 'destroy']).use(middleware.jwt())
+
+// Crear docentes por orientador o admin del sistema
+router
+  .post('/orientadores/docentes', [DocenteController, 'store'])
+  .use([middleware.jwt(), () => import('#middleware/admin_o_orientador_middleware')])
