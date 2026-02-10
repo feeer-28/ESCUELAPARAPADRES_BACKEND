@@ -8,10 +8,17 @@ export default class EventosController {
    */
   async index({ request, response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const { page = 1, limit = 10, tipo } = request.qs()
       
       const eventos = await Evento.query()
-        .where('institucion_id', jwtUser.institucionId)
+        .where('institucion_id', jwtUser?.funcionario?.institucionId || 0)
         .where('activo', true)
         .if(tipo, (query) => query.where('tipo_evento', tipo))
         .orderBy('fecha_evento', 'asc')
@@ -38,6 +45,13 @@ export default class EventosController {
    */
   async store({ request, response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const data = request.only([
         'titulo',
         'descripcion',
@@ -56,7 +70,7 @@ export default class EventosController {
 
       const evento = await Evento.create({
         ...data,
-        institucionId: jwtUser.institucionId,
+        institucionId: jwtUser?.funcionario?.institucionId || 0,
         creadoPor: jwtUser.id
       })
 

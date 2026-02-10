@@ -7,6 +7,13 @@ export default class DispositivosController {
    */
   async registrar({ request, response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const data = request.only(['token_fcm', 'plataforma', 'version_app'])
 
       // Validación básica
@@ -72,6 +79,13 @@ export default class DispositivosController {
    */
   async eliminar({ request, response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const { token_fcm } = request.only(['token_fcm'])
 
       if (!token_fcm) {
@@ -114,6 +128,13 @@ export default class DispositivosController {
    */
   async index({ response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const dispositivos = await DispositivoMovil.query()
         .where('usuario_id', jwtUser.id)
         .where('activo', true)

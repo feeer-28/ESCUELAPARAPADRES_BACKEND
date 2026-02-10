@@ -13,10 +13,21 @@ router
     // === GESTIÓN ACADÉMICA ===
     // Cursos con métricas
     router.get('/coordinadores/cursos', [CoordinadoresController, 'cursos'])
+    router.post('/coordinadores/cursos', [CoordinadoresController, 'crearCurso'])
+    router.put('/coordinadores/cursos/:id', [CoordinadoresController, 'actualizarCurso'])
+    router.patch('/coordinadores/cursos/:id', [CoordinadoresController, 'actualizarCurso'])
+    router.delete('/coordinadores/cursos/:id', [CoordinadoresController, 'eliminarCurso'])
     router.get('/coordinadores/cursos/:id/rendimiento', [
       CoordinadoresController,
       'rendimientoCurso',
     ])
+    
+    // Grados
+    router.get('/coordinadores/grados', [CoordinadoresController, 'listarGrados'])
+    router.post('/coordinadores/grados', [CoordinadoresController, 'crearGrado'])
+    router.put('/coordinadores/grados/:id', [CoordinadoresController, 'actualizarGrado'])
+    router.patch('/coordinadores/grados/:id', [CoordinadoresController, 'actualizarGrado'])
+    router.delete('/coordinadores/grados/:id', [CoordinadoresController, 'eliminarGrado'])
 
     // === GESTIÓN DE PERSONAL ===
     // Vista unificada de personal (docentes + orientadores)

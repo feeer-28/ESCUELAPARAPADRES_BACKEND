@@ -1,7 +1,7 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import NotificacionPush from '#models/notificacion_push_v2'
 import DispositivoMovil from '#models/dispositivo_movil_v2'
-import { validator, rules } from '@adonisjs/validator'
+
 
 export default class NotificacionesV2Controller {
   /**
@@ -54,7 +54,12 @@ export default class NotificacionesV2Controller {
    * Marcar notificación como leída
    */
   async marcarLeida({ params, response, jwtUser }: HttpContext) {
-    try {
+    try {      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
       const notificacion = await NotificacionPush.query()
         .where('id', params.id)
         .where('usuario_id', jwtUser.id)
@@ -181,10 +186,10 @@ export default class NotificacionesV2Controller {
       return response.json({
         success: true,
         data: {
-          total: total?.total || 0,
-          leidas: leidas?.total || 0,
-          noLeidas: (total?.total || 0) - (leidas?.total || 0),
-          enviadas: enviadas?.total || 0,
+          total: total?.$extras?.total || 0,
+          leidas: leidas?.$extras?.total || 0,
+          noLeidas: (total?.$extras?.total || 0) - (leidas?.$extras?.total || 0),
+          enviadas: enviadas?.$extras?.total || 0,
           porTipo: porTipo.map(item => ({
             tipo: item.tipo,
             cantidad: item.$extras.cantidad
@@ -215,6 +220,13 @@ export default class NotificacionesV2Controller {
       }
 
       // Verificar que el usuario tenga dispositivos activos
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const dispositivos = await DispositivoMovil.activosPorUsuario(jwtUser.id)
 
       if (dispositivos.length === 0) {

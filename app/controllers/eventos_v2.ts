@@ -3,7 +3,6 @@ import Evento from '#models/evento_v2'
 import NotificacionPush from '#models/notificacion_push_v2'
 import DispositivoMovil from '#models/dispositivo_movil_v2'
 import { DateTime } from 'luxon'
-import { validator, rules } from '@adonisjs/validator'
 
 export default class EventosV2Controller {
   /**
@@ -302,8 +301,8 @@ export default class EventosV2Controller {
       return response.json({
         success: true,
         data: {
-          total: total?.total || 0,
-          proximos: proximos?.total || 0,
+          total: total?.$extras?.total || 0,
+          proximos: proximos?.$extras?.total || 0,
           porTipo: porTipo.map(item => ({
             tipo: item.tipoEvento,
             cantidad: item.$extras.cantidad

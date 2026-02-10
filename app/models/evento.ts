@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon'
-import { BaseModel, column, manyToOne, BelongsTo } from '@adonisjs/lucid/orm'
+import { BaseModel, column, belongsTo } from '@adonisjs/lucid/orm'
+import type { BelongsTo } from '@adonisjs/lucid/types/relations'
 import Usuario from '#models/usuario'
 import Institucion from '#models/institucion'
 
@@ -28,19 +29,19 @@ export default class Evento extends BaseModel {
   @column()
   declare creadoPor: number
 
-  @column.boolean()
+  @column()
   declare activo: boolean
 
   @column.dateTime({ autoCreate: true })
   declare creadoEn: DateTime
 
   // Relaciones
-  @ManyToOne(() => Usuario, {
+  @belongsTo(() => Usuario, {
     foreignKey: 'creadoPor'
   })
   declare creador: BelongsTo<typeof Usuario>
 
-  @ManyToOne(() => Institucion, {
+  @belongsTo(() => Institucion, {
     foreignKey: 'institucionId'
   })
   declare institucion: BelongsTo<typeof Institucion>

@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon'
-import { BaseModel, column, manyToOne, BelongsTo } from '@adonisjs/lucid/orm'
+import { BaseModel, column, belongsTo } from '@adonisjs/lucid/orm'
+import type { BelongsTo } from '@adonisjs/lucid/types/relations'
 import Usuario from '#models/usuario'
 
 export default class NotificacionPush extends BaseModel {
@@ -21,10 +22,10 @@ export default class NotificacionPush extends BaseModel {
   @column()
   declare referenciaId: number | null
 
-  @column.boolean()
+  @column()
   declare leida: boolean
 
-  @column.boolean()
+  @column()
   declare enviada: boolean
 
   @column.dateTime({ autoCreate: true })
@@ -37,7 +38,7 @@ export default class NotificacionPush extends BaseModel {
   declare leidaEn: DateTime | null
 
   // Relación con usuario
-  @ManyToOne(() => Usuario, {
+  @belongsTo(() => Usuario, {
     foreignKey: 'usuarioId'
   })
   declare usuario: BelongsTo<typeof Usuario>

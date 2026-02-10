@@ -1,8 +1,8 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Funcionario from '#models/funcionario'
 import Curso from '#models/curso'
+import Grado from '#models/grado'
 import Usuario from '#models/usuario'
-import Institucion from '#models/institucion'
 import Periodo from '#models/periodo'
 import db from '@adonisjs/lucid/services/db'
 
@@ -860,6 +860,13 @@ export default class CoordinadoresController {
 
       const institucionId = coordinador.institucionId
 
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'El coordinador no tiene una institución asignada',
+        })
+      }
+
       // Buscar el orientador y verificar que pertenece a la institución del coordinador
       const orientador = await Funcionario.query()
         .where('id', params.id)
@@ -966,6 +973,13 @@ export default class CoordinadoresController {
 
       const institucionId = coordinador.institucionId
 
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'El coordinador no tiene una institución asignada',
+        })
+      }
+
       // Buscar el orientador y verificar que pertenece a la institución del coordinador
       const orientador = await Funcionario.query()
         .where('id', params.id)
@@ -1018,6 +1032,13 @@ export default class CoordinadoresController {
         .firstOrFail()
 
       const institucionId = coordinador.institucionId
+
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'El coordinador no tiene una institución asignada',
+        })
+      }
 
       // Obtener acudientes de la institución con sus estudiantes vinculados
       const acudientes = await db
@@ -1486,6 +1507,566 @@ export default class CoordinadoresController {
       return response.status(500).json({
         success: false,
         message: 'Error al listar períodos',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Crear curso en la institución del coordinador
+   * POST /coordinadores/cursos
+   */
+  async crearCurso({ request, response, jwtUser }: HttpContext) {
+    try {
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'El coordinador no tiene una institución asignada',
+        })
+      }
+
+      const { nombre, gradoId, jornada } = request.only(['nombre', 'gradoId', 'jornada'])
+
+      // Validar campos requeridos
+      if (!nombre || !gradoId) {
+        return response.status(400).json({
+          success: false,
+          message: 'Los campos nombre y gradoId son requeridos',
+        })
+      }
+
+      // Validar que el grado existe
+      const grado = await Grado.find(gradoId)
+      if (!grado) {
+        return response.status(404).json({
+          success: false,
+          message: 'El grado especificado no existe',
+        })
+      }
+
+      // Verificar que no exista un curso con el mismo nombre en la institución
+      const cursoExistente = await Curso.query()
+        .where('nombre', nombre)
+        .where('institucion_id', institucionId)
+        .where('grado_id', gradoId)
+        .first()
+
+      if (cursoExistente) {
+        return response.status(400).json({
+          success: false,
+          message: 'Ya existe un curso con ese nombre en ese grado',
+        })
+      }
+
+      // Crear el curso
+      const curso = await Curso.create({
+        nombre,
+        gradoId,
+        jornada: jornada || 'Completa',
+        institucionId,
+      })
+
+      await curso.load('grado')
+
+      return response.status(201).json({
+        success: true,
+        message: 'Curso creado exitosamente',
+        data: {
+          id: curso.id,
+          nombre: curso.nombre,
+          gradoId: curso.gradoId,
+          grado: {
+            id: curso.grado.id,
+            nombre: curso.grado.nombre,
+          },
+          jornada: curso.jornada,
+          institucionId: curso.institucionId,
+          totalEstudiantes: 0,
+        },
+      })
+    } catch (error) {
+      console.error('Error al crear curso:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al crear curso',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Actualizar curso de la institución del coordinador
+   * PUT /coordinadores/cursos/:id
+   */
+  async actualizarCurso({ params, request, response, jwtUser }: HttpContext) {
+    try {
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'El coordinador no tiene una institución asignada',
+        })
+      }
+
+      // Buscar el curso y verificar que pertenece a la institución
+      const curso = await Curso.query()
+        .where('id', params.id)
+        .where('institucion_id', institucionId)
+        .first()
+
+      if (!curso) {
+        return response.status(404).json({
+          success: false,
+          message: 'Curso no encontrado o no pertenece a su institución',
+        })
+      }
+
+      const { nombre, gradoId, jornada } = request.only(['nombre', 'gradoId', 'jornada'])
+
+      // Si se va a cambiar el nombre o grado, verificar que no exista otro curso igual
+      if ((nombre && nombre !== curso.nombre) || (gradoId && gradoId !== curso.gradoId)) {
+        const cursoExistente = await Curso.query()
+          .where('nombre', nombre || curso.nombre)
+          .where('grado_id', gradoId || curso.gradoId)
+          .where('institucion_id', institucionId)
+          .whereNot('id', curso.id)
+          .first()
+
+        if (cursoExistente) {
+          return response.status(400).json({
+            success: false,
+            message: 'Ya existe otro curso con ese nombre en ese grado',
+          })
+        }
+      }
+
+      // Validar que el grado existe si se proporciona
+      if (gradoId) {
+        const grado = await Grado.find(gradoId)
+        if (!grado) {
+          return response.status(404).json({
+            success: false,
+            message: 'El grado especificado no existe',
+          })
+        }
+        curso.gradoId = gradoId
+      }
+
+      // Actualizar datos
+      if (nombre) curso.nombre = nombre
+      if (jornada) curso.jornada = jornada
+
+      await curso.save()
+      await curso.load('grado')
+
+      // Obtener total de estudiantes
+      const estudiantesResult = await db
+        .from('estudiantes')
+        .where('curso_id', curso.id)
+        .count('* as total')
+      const totalEstudiantes = Number(estudiantesResult[0]?.total || 0)
+
+      return response.status(200).json({
+        success: true,
+        message: 'Curso actualizado exitosamente',
+        data: {
+          id: curso.id,
+          nombre: curso.nombre,
+          gradoId: curso.gradoId,
+          grado: {
+            id: curso.grado.id,
+            nombre: curso.grado.nombre,
+          },
+          jornada: curso.jornada,
+          institucionId: curso.institucionId,
+          totalEstudiantes,
+        },
+      })
+    } catch (error) {
+      console.error('Error al actualizar curso:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al actualizar curso',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Eliminar curso de la institución del coordinador
+   * DELETE /coordinadores/cursos/:id
+   */
+  async eliminarCurso({ params, response, jwtUser }: HttpContext) {
+    try {
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'El coordinador no tiene una institución asignada',
+        })
+      }
+
+      // Buscar el curso y verificar que pertenece a la institución
+      const curso = await Curso.query()
+        .where('id', params.id)
+        .where('institucion_id', institucionId)
+        .first()
+
+      if (!curso) {
+        return response.status(404).json({
+          success: false,
+          message: 'Curso no encontrado o no pertenece a su institución',
+        })
+      }
+
+      // Verificar si hay estudiantes en el curso
+      const estudiantesResult = await db
+        .from('estudiantes')
+        .where('curso_id', curso.id)
+        .count('* as total')
+      const totalEstudiantes = Number(estudiantesResult[0]?.total || 0)
+
+      if (totalEstudiantes > 0) {
+        return response.status(400).json({
+          success: false,
+          message: `No se puede eliminar el curso porque tiene ${totalEstudiantes} estudiante(s) matriculado(s)`,
+          data: {
+            totalEstudiantes,
+          },
+        })
+      }
+
+      // Verificar si hay tareas asignadas al curso
+      const tareasResult = await db
+        .from('asignaciones')
+        .where('curso_id', curso.id)
+        .count('* as total')
+      const totalTareas = Number(tareasResult[0]?.total || 0)
+
+      if (totalTareas > 0) {
+        return response.status(400).json({
+          success: false,
+          message: `No se puede eliminar el curso porque tiene ${totalTareas} tarea(s) asignada(s)`,
+          data: {
+            totalTareas,
+          },
+        })
+      }
+
+      await curso.delete()
+
+      return response.status(200).json({
+        success: true,
+        message: 'Curso eliminado exitosamente',
+      })
+    } catch (error) {
+      console.error('Error al eliminar curso:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al eliminar curso',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Listar grados con información de cursos
+   * GET /coordinadores/grados
+   */
+  async listarGrados({ response, jwtUser }: HttpContext) {
+    try {
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser!.id)
+        .firstOrFail()
+
+      const institucionId = coordinador.institucionId
+
+      if (!institucionId) {
+        return response.status(400).json({
+          success: false,
+          message: 'El coordinador no tiene una institución asignada',
+        })
+      }
+
+      // Obtener todos los grados
+      const grados = await Grado.query().orderBy('orden', 'asc')
+
+      // Para cada grado, obtener información de cursos de la institución
+      const gradosConInfo = await Promise.all(
+        grados.map(async (grado) => {
+          // Obtener cursos del grado en la institución del coordinador
+          const cursos = await Curso.query()
+            .where('grado_id', grado.id)
+            .where('institucion_id', institucionId)
+            .orderBy('nombre', 'asc')
+
+          // Obtener total de estudiantes por curso
+          const cursosConEstudiantes = await Promise.all(
+            cursos.map(async (curso) => {
+              const estudiantesResult = await db
+                .from('estudiantes')
+                .where('curso_id', curso.id)
+                .count('* as total')
+              const totalEstudiantes = Number(estudiantesResult[0]?.total || 0)
+
+              return {
+                id: curso.id,
+                nombre: curso.nombre,
+                jornada: curso.jornada,
+                totalEstudiantes,
+              }
+            })
+          )
+
+          const totalCursos = cursosConEstudiantes.length
+          const totalEstudiantes = cursosConEstudiantes.reduce(
+            (sum, curso) => sum + curso.totalEstudiantes,
+            0
+          )
+
+          return {
+            id: grado.id,
+            nombre: grado.nombre,
+            orden: grado.orden,
+            cursos: cursosConEstudiantes,
+            totalCursos,
+            totalEstudiantes,
+          }
+        })
+      )
+
+      return response.status(200).json({
+        success: true,
+        data: gradosConInfo,
+      })
+    } catch (error) {
+      console.error('Error al listar grados:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al listar grados',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Crear grado
+   * POST /coordinadores/grados
+   */
+  async crearGrado({ request, response, jwtUser }: HttpContext) {
+    try {
+      // Validar que es coordinador
+      if (!jwtUser || jwtUser.rolId !== 3) {
+        return response.status(403).json({
+          success: false,
+          message: 'Acceso denegado',
+        })
+      }
+
+      const { nombre, orden } = request.only(['nombre', 'orden'])
+
+      // Validar campos requeridos
+      if (!nombre) {
+        return response.status(400).json({
+          success: false,
+          message: 'El campo nombre es requerido',
+        })
+      }
+
+      // Verificar que no exista un grado con el mismo nombre
+      const gradoExistente = await Grado.findBy('nombre', nombre)
+      if (gradoExistente) {
+        return response.status(400).json({
+          success: false,
+          message: 'Ya existe un grado con ese nombre',
+        })
+      }
+
+      // Crear el grado
+      const grado = await Grado.create({
+        nombre,
+        orden: orden || null,
+      })
+
+      return response.status(201).json({
+        success: true,
+        message: 'Grado creado exitosamente',
+        data: {
+          id: grado.id,
+          nombre: grado.nombre,
+          orden: grado.orden,
+          totalCursos: 0,
+          totalEstudiantes: 0,
+        },
+      })
+    } catch (error) {
+      console.error('Error al crear grado:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al crear grado',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Actualizar grado
+   * PUT /coordinadores/grados/:id
+   */
+  async actualizarGrado({ params, request, response, jwtUser }: HttpContext) {
+    try {
+      // Validar que es coordinador
+      if (!jwtUser || jwtUser.rolId !== 3) {
+        return response.status(403).json({
+          success: false,
+          message: 'Acceso denegado',
+        })
+      }
+
+      const grado = await Grado.find(params.id)
+      if (!grado) {
+        return response.status(404).json({
+          success: false,
+          message: 'Grado no encontrado',
+        })
+      }
+
+      const { nombre, orden } = request.only(['nombre', 'orden'])
+
+      // Si se va a cambiar el nombre, verificar que no exista otro grado con ese nombre
+      if (nombre && nombre !== grado.nombre) {
+        const gradoExistente = await Grado.query()
+          .where('nombre', nombre)
+          .whereNot('id', grado.id)
+          .first()
+
+        if (gradoExistente) {
+          return response.status(400).json({
+            success: false,
+            message: 'Ya existe otro grado con ese nombre',
+          })
+        }
+        grado.nombre = nombre
+      }
+
+      if (orden !== undefined) {
+        grado.orden = orden
+      }
+
+      await grado.save()
+
+      // Obtener información actualizada
+      const coordinador = await Funcionario.query()
+        .where('usuario_id', jwtUser.id)
+        .firstOrFail()
+      const institucionId = coordinador.institucionId
+
+      if (!institucionId) {
+        return response.status(200).json({
+          success: true,
+          message: 'Grado actualizado exitosamente',
+          data: {
+            id: grado.id,
+            nombre: grado.nombre,
+            orden: grado.orden,
+            totalCursos: 0,
+          },
+        })
+      }
+
+      const cursosResult = await db
+        .from('cursos')
+        .where('grado_id', grado.id)
+        .where('institucion_id', institucionId)
+        .count('* as total')
+      const totalCursos = Number(cursosResult[0]?.total || 0)
+
+      return response.status(200).json({
+        success: true,
+        message: 'Grado actualizado exitosamente',
+        data: {
+          id: grado.id,
+          nombre: grado.nombre,
+          orden: grado.orden,
+          totalCursos,
+        },
+      })
+    } catch (error) {
+      console.error('Error al actualizar grado:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al actualizar grado',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Eliminar grado
+   * DELETE /coordinadores/grados/:id
+   */
+  async eliminarGrado({ params, response, jwtUser }: HttpContext) {
+    try {
+      // Validar que es coordinador
+      if (!jwtUser || jwtUser.rolId !== 3) {
+        return response.status(403).json({
+          success: false,
+          message: 'Acceso denegado',
+        })
+      }
+
+      const grado = await Grado.find(params.id)
+      if (!grado) {
+        return response.status(404).json({
+          success: false,
+          message: 'Grado no encontrado',
+        })
+      }
+
+      // Verificar si hay cursos asociados al grado
+      const cursosResult = await db
+        .from('cursos')
+        .where('grado_id', grado.id)
+        .count('* as total')
+      const totalCursos = Number(cursosResult[0]?.total || 0)
+
+      if (totalCursos > 0) {
+        return response.status(400).json({
+          success: false,
+          message: `No se puede eliminar el grado porque tiene ${totalCursos} curso(s) asociado(s)`,
+          data: {
+            totalCursos,
+          },
+        })
+      }
+
+      await grado.delete()
+
+      return response.status(200).json({
+        success: true,
+        message: 'Grado eliminado exitosamente',
+      })
+    } catch (error) {
+      console.error('Error al eliminar grado:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al eliminar grado',
         error: error.message,
       })
     }
