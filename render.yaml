@@ -6,7 +6,7 @@ services:
     region: oregon
     plan: free
     branch: feature/Cloud
-    buildCommand: npm ci --include=dev && node ace build --ignore-ts-errors
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: cd build && npm ci --omit=dev && node bin/server.js
     healthCheckPath: /api/movil/soporte/info
     envVars:
