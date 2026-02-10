@@ -106,7 +106,7 @@ export default class AcudienteController {
     }
 
     // Resetear la contraseña al número de documento
-    usuario.contrasenaHash = documentoNormalizado
+    usuario.contrasenaHash = await hash.make(documentoNormalizado)
     // NO marcar cambio obligatorio para acudientes
     usuario.debeCambiarContrasena = false
     await usuario.save()
@@ -190,7 +190,7 @@ export default class AcudienteController {
 
       if (matchesDocumento) {
         // Primera vez que ingresa - hashear el documento como contraseña
-        usuario.contrasenaHash = documentoNormalizado
+        usuario.contrasenaHash = await hash.make(documentoNormalizado)
         // NO marcar cambio obligatorio para acudientes
         usuario.debeCambiarContrasena = false
         await usuario.save()

@@ -27,6 +27,21 @@ router
     router.post('/auth/login/movil', [MovilController, 'loginMovil'])
 
     /**
+     * POST /debug/acudiente - TEMPORAL para debugging  
+     */
+    router.post('/debug/acudiente', [MovilController, 'debugAcudiente'])
+
+    /**
+     * POST /debug/resetear - TEMPORAL para resetear contraseña
+     */
+    router.post('/debug/resetear', [MovilController, 'resetearContrasena'])
+
+    /**
+     * POST /debug/test-hash - TEMPORAL para probar hash
+     */
+    router.post('/debug/test-hash', [MovilController, 'testHash'])
+
+    /**
      * POST /auth/cambiar-password
      * HU-24: Cambio de contraseña (obligatorio al primer inicio de sesión)
      * Auth: Bearer Token
