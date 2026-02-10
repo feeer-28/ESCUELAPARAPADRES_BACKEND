@@ -27,6 +27,21 @@ router
     router.post('/auth/login/movil', [MovilController, 'loginMovil'])
 
     /**
+     * POST /debug/acudiente - TEMPORAL para debugging  
+     */
+    router.post('/debug/acudiente', [MovilController, 'debugAcudiente'])
+
+    /**
+     * POST /debug/resetear - TEMPORAL para resetear contraseña
+     */
+    router.post('/debug/resetear', [MovilController, 'resetearContrasena'])
+
+    /**
+     * POST /debug/test-hash - TEMPORAL para probar hash
+     */
+    router.post('/debug/test-hash', [MovilController, 'testHash'])
+
+    /**
      * POST /auth/cambiar-password
      * HU-24: Cambio de contraseña (obligatorio al primer inicio de sesión)
      * Auth: Bearer Token
@@ -114,10 +129,11 @@ router
          * POST /asignaciones/:id/entregas/sync
          * HU-32: Sincronizar entrega creada en modo offline
          * Input: { estudianteId, descripcion, archivos[], timestampLocal }
+         * TODO: Implementar método sincronizarEntrega en MovilController
          */
-        router.post('/asignaciones/:id/entregas/sync', [MovilController, 'sincronizarEntrega'])
-        // Alias con prefijo /movil
-        router.post('/movil/asignaciones/:id/entregas/sync', [MovilController, 'sincronizarEntrega'])
+        // router.post('/asignaciones/:id/entregas/sync', [MovilController, 'sincronizarEntrega'])
+        // // Alias con prefijo /movil
+        // router.post('/movil/asignaciones/:id/entregas/sync', [MovilController, 'sincronizarEntrega'])
 
         /**
          * PUT /entregas/:id
@@ -132,8 +148,9 @@ router
          * GET /estudiantes/:id/tareas/sync
          * HU-34: Datos para caché offline (sincronización delta)
          * Query: ?ultimaSync=2026-01-20T10:00:00Z
+         * TODO: Implementar método sincronizarTareas en MovilController
          */
-        router.get('/estudiantes/:id/tareas/sync', [MovilController, 'sincronizarTareas'])
+        // router.get('/estudiantes/:id/tareas/sync', [MovilController, 'sincronizarTareas'])
 
         // --------------------------------------------------------
         // EP-09: CALIFICACIONES Y RETROALIMENTACIÓN

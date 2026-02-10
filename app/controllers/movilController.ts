@@ -22,9 +22,181 @@ export default class MovilController {
   // ============================================================
 
   /**
-   * HU-22: Login mÃ³vil para acudientes
-   * POST /auth/login/movil
+   * Endpoint temporal para probar el servicio de hash directamente
    */
+  async testHash({ response }: HttpContext) {
+    try {
+      const testValue = '1061705869'
+      
+      // Probar hash.make
+      const hashed = await hash.make(testValue)
+      console.log('🔧 Hash generado:', hashed)
+      
+      // Probar hash.verify inmediatamente
+      const verification1 = await hash.verify(hashed, testValue)
+      console.log('🔍 Verificación inmediata:', verification1)
+      
+      // Probar diferentes valores
+      const verification2 = await hash.verify(hashed, '1061705869')
+      const verification3 = await hash.verify(hashed, 'otroValor')
+      
+      console.log('🔍 Verificación con mismo string:', verification2)
+      console.log('🔍 Verificación con valor incorrecto:', verification3)
+
+      return response.json({
+        success: true,
+        debug: {
+          testValue,
+          hashedValue: hashed,
+          hashedLength: hashed.length,
+          verificacionInmediata: verification1,
+          verificacionMismoString: verification2,
+          verificacionIncorrecta: verification3,
+          hashAlgorithm: 'bcrypt', // AdonisJS usa bcrypt por defecto
+        }
+      })
+    } catch (error) {
+      return response.status(500).json({
+        success: false,
+        message: 'Error en test de hash',
+        error: error.message
+      })
+    }
+  }
+  async resetearContrasena({ request, response }: HttpContext) {
+    try {
+      const documento = String(request.input('documento') ?? '').trim()
+      
+      if (!documento) {
+        return response.json({
+          success: false,
+          message: 'Documento requerido'
+        })
+      }
+
+      const normalize = (value: string) => value.replace(/\D+/g, '')
+      const documentoNormalizado = normalize(documento)
+
+      // Buscar acudiente
+      const acudiente = await Acudiente.query()
+        .where('numero_documento', documentoNormalizado)
+        .preload('usuario')
+        .first()
+
+      if (!acudiente || !acudiente.usuario) {
+        return response.json({
+          success: false,
+          message: 'Acudiente o usuario no encontrado'
+        })
+      }
+
+      // Resetear contraseña al documento
+      const usuario = acudiente.usuario
+      const hashAnterior = usuario.contrasenaHash
+      
+      console.log('🔧 RESET DEBUG:')
+      console.log('📄 Documento para hash:', JSON.stringify(documentoNormalizado))
+      console.log('📏 Longitud documento:', documentoNormalizado.length)
+      console.log('🔑 Caracteres del documento:', documentoNormalizado.split('').map(c => `${c}(${c.charCodeAt(0)})`))
+      
+      usuario.contrasenaHash = await hash.make(documentoNormalizado) 
+      usuario.debeCambiarContrasena = false
+      await usuario.save()
+
+      // Recargar usuario desde BD (importante para verificación)
+      const usuarioRecargado = await Usuario.findOrFail(usuario.id)
+      
+      console.log('🔍 Hash guardado:', usuarioRecargado.contrasenaHash)
+      console.log('🔍 Verificando con:', JSON.stringify(documentoNormalizado))
+      
+      // Verificar que el hash funciona
+      const verificacion = await hash.verify(usuarioRecargado.contrasenaHash, documentoNormalizado)
+      
+      console.log('✅ Resultado verificación:', verificacion)
+
+      return response.json({
+        success: true,
+        message: 'Contraseña reseteada',
+        debug: {
+          documento: documentoNormalizado,
+          documentoJson: JSON.stringify(documentoNormalizado),
+          documentoLength: documentoNormalizado.length,
+          documentoChars: documentoNormalizado.split('').map(c => `${c}(${c.charCodeAt(0)})`),
+          usuarioId: usuarioRecargado.id,
+          hashAnteriorLength: hashAnterior?.length || 0,
+          hashNuevoLength: usuarioRecargado.contrasenaHash?.length || 0,
+          hashNuevo: usuarioRecargado.contrasenaHash,
+          verificacionExitosa: verificacion,
+          // Test adicional: verificar con string hardcodeado
+          testVerificacion: await hash.verify(usuarioRecargado.contrasenaHash, '1061705869')
+        }
+      })
+    } catch (error) {
+      return response.status(500).json({
+        success: false,
+        message: 'Error al resetear contraseña',
+        error: error.message
+      })
+    }
+  }
+  async debugAcudiente({ request, response }: HttpContext) {
+    try {
+      const documento = String(request.input('documento') ?? '').trim()
+      
+      if (!documento) {
+        return response.json({
+          success: false,
+          message: 'Documento requerido'
+        })
+      }
+
+      const normalize = (value: string) => value.replace(/\D+/g, '')
+      const documentoNormalizado = normalize(documento)
+
+      // Buscar acudiente
+      const acudiente = await Acudiente.query()
+        .where('numero_documento', documentoNormalizado)
+        .preload('usuario')
+        .first()
+
+      // También buscar con documento original (por si acaso)
+      const acudienteOriginal = await Acudiente.query()  
+        .where('numero_documento', documento)
+        .preload('usuario')
+        .first()
+
+      return response.json({
+        success: true,
+        debug: {
+          documentoOriginal: documento,
+          documentoNormalizado: documentoNormalizado,
+          acudienteConNormalizado: acudiente ? {
+            id: acudiente.id,
+            numeroDocumento: acudiente.numeroDocumento,
+            nombres: acudiente.nombres,
+            usuarioId: acudiente.usuarioId,
+            usuario: acudiente.usuario ? {
+              id: acudiente.usuario.id,
+              correo: acudiente.usuario.correo,
+              rolId: acudiente.usuario.rolId,
+              hashLength: acudiente.usuario.contrasenaHash?.length || 0
+            } : null
+          } : null,
+          acudienteConOriginal: acudienteOriginal ? {
+            id: acudienteOriginal.id,
+            numeroDocumento: acudienteOriginal.numeroDocumento,
+            nombres: acudienteOriginal.nombres 
+          } : null
+        }
+      })
+    } catch (error) {
+      return response.status(500).json({
+        success: false,
+        message: 'Error en debug',
+        error: error.message
+      })
+    }
+  }
   async loginMovil({ request, response }: HttpContext) {
     try {
       const documento = String(request.input('documento') ?? '').trim()
@@ -33,13 +205,22 @@ export default class MovilController {
       if (!documento || !password) {
         return response.status(400).json({
           success: false,
-          message: 'Documento y contraseÃ±a son requeridos',
+          message: 'Documento y contraseña son requeridos',
         })
       }
 
-      // Buscar acudiente por nÃºmero de documento
+      // Normalizar documento (quitar caracteres especiales)
+      const normalize = (value: string) => value.replace(/\D+/g, '')
+      const documentoNormalizado = normalize(documento)
+
+      console.log('🔍 DEBUG LOGIN:')
+      console.log('📄 Documento original:', documento)
+      console.log('📄 Documento normalizado:', documentoNormalizado)
+      console.log('🔑 Password:', password)
+
+      // Buscar acudiente por número de documento normalizado
       const acudiente = await Acudiente.query()
-        .where('numero_documento', documento)
+        .where('numero_documento', documentoNormalizado)
         .preload('usuario', (query) => {
           query.preload('rol')
         })
@@ -51,6 +232,12 @@ export default class MovilController {
         })
         .first()
 
+      console.log('👤 Acudiente encontrado:', acudiente ? 'SÍ' : 'NO')
+      if (acudiente) {
+        console.log('👤 ID acudiente:', acudiente.id)
+        console.log('👤 Usuario ID:', acudiente.usuarioId)
+      }
+
       if (!acudiente) {
         return response.status(401).json({
           success: false,
@@ -58,7 +245,7 @@ export default class MovilController {
         })
       }
 
-      const usuario = acudiente.usuario
+      let usuario = acudiente.usuario
       if (!usuario) {
         return response.status(401).json({
           success: false,
@@ -82,12 +269,29 @@ export default class MovilController {
         })
       }
 
-      // Verificar contraseÃ±a
-      const isPasswordValid = await hash.verify(usuario.contrasenaHash, password)
+      // Verificar contraseña
+      let isPasswordValid = await hash.verify(usuario.contrasenaHash, password)
+
+      // Si la contraseña no coincide, verificar si está usando su documento como contraseña (primera vez)
+      if (!isPasswordValid) {
+        const passwordNormalizado = normalize(password)
+        const matchesDocumento = passwordNormalizado === documentoNormalizado
+
+        if (matchesDocumento) {
+          // Primera vez que ingresa - hashear el documento como contraseña
+          usuario.contrasenaHash = await hash.make(documentoNormalizado)
+          usuario.debeCambiarContrasena = false
+          await usuario.save()
+
+          // Verificar nuevamente con el password normalizado
+          isPasswordValid = await hash.verify(usuario.contrasenaHash, documentoNormalizado)
+        }
+      }
+
       if (!isPasswordValid) {
         return response.status(401).json({
           success: false,
-          message: 'Documento o contraseÃ±a incorrectos',
+          message: 'Documento o contraseña incorrectos',
         })
       }
 
