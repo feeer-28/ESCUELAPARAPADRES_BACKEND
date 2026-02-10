@@ -51,21 +51,33 @@ interface ParseEstudiantesResult {
 
 export default class CargaMasivaDualService {
   /**
-   * Convertir fecha DD/MM/YYYY a DateTime
+   * Convertir fecha DD/MM/YYYY o YYYY/MM/DD a DateTime
    */
   private static convertirFecha(fechaStr: string): DateTime | null {
     if (!fechaStr) return null
 
     // Intentar formato DD/MM/YYYY
-    const partes = fechaStr.split('/')
+    let partes = fechaStr.split('/')
     if (partes.length === 3) {
-      const [dia, mes, anio] = partes
-      const fecha = DateTime.fromObject({
-        day: parseInt(dia),
-        month: parseInt(mes),
-        year: parseInt(anio),
-      })
-      if (fecha.isValid) return fecha
+      const [primero, segundo, tercero] = partes
+      
+      // Si el primer valor es > 31, es YYYY/MM/DD
+      if (parseInt(primero) > 31) {
+        const fecha = DateTime.fromObject({
+          year: parseInt(primero),
+          month: parseInt(segundo),
+          day: parseInt(tercero),
+        })
+        if (fecha.isValid) return fecha
+      } else {
+        // DD/MM/YYYY
+        const fecha = DateTime.fromObject({
+          day: parseInt(primero),
+          month: parseInt(segundo),
+          year: parseInt(tercero),
+        })
+        if (fecha.isValid) return fecha
+      }
     }
 
     // Intentar formato YYYY-MM-DD
@@ -316,7 +328,11 @@ export default class CargaMasivaDualService {
       if (fechaNacimientoStr) {
         fechaNacimiento = this.convertirFecha(fechaNacimientoStr)
         if (!fechaNacimiento) {
-          errors.push({ campo: 'fecha_nacimiento', valor: fechaNacimientoStr, mensaje: 'Formato de fecha inválido (use DD/MM/YYYY)' })
+          errors.push({ 
+            campo: 'fecha_nacimiento', 
+            valor: fechaNacimientoStr, 
+            mensaje: 'Formato de fecha inválido. Use DD/MM/YYYY o YYYY/MM/DD. Ejemplo: 01/01/2008 o 2008/01/01' 
+          })
         }
       }
 

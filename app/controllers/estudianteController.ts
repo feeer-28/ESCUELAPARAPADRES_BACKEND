@@ -806,18 +806,32 @@ export default class EstudianteController {
       }
 
       if (!archivoEstudiantes.isValid) {
+        const detallesError = archivoEstudiantes.errors.map(error => ({
+          campo: error.fieldName,
+          regla: error.rule,
+          mensaje: error.message
+        }))
+        
         return response.status(400).json({
           success: false,
-          message: 'El archivo de estudiantes no es válido',
-          errors: archivoEstudiantes.errors,
+          message: 'El archivo de estudiantes no cumple con los requisitos',
+          detalles: 'Verifique que el archivo sea .xlsx, .xls o .csv y no exceda 10MB',
+          errors: detallesError,
         })
       }
 
       if (!archivoAcudientes.isValid) {
+        const detallesError = archivoAcudientes.errors.map(error => ({
+          campo: error.fieldName,
+          regla: error.rule,
+          mensaje: error.message  
+        }))
+        
         return response.status(400).json({
           success: false,
-          message: 'El archivo de acudientes no es válido',
-          errors: archivoAcudientes.errors,
+          message: 'El archivo de acudientes no cumple con los requisitos',
+          detalles: 'Verifique que el archivo sea .xlsx, .xls o .csv y no exceda 10MB',
+          errors: detallesError,
         })
       }
 
@@ -839,8 +853,23 @@ export default class EstudianteController {
         return response.status(400).json({
           success: false,
           message: 'No hay acudientes válidos en el archivo',
+          detalles: `Se procesaron ${resultadoAcudientes.totalRows} filas pero todas tienen errores`,
           data: {
+            totalFilas: resultadoAcudientes.totalRows,
+            filasValidas: 0,
+            filasInvalidas: resultadoAcudientes.invalidRows.length,
             errores: resultadoAcudientes.invalidRows,
+            columnasEsperadas: [
+              'TIPO DOCUMENTO (o tipo_documento)',
+              'NUMERO DOCUMENTO (o numero_documento)',
+              'NOMBRES',
+              'APELLIDOS',
+              'TELEFONO (opcional, 10 dígitos)',
+              'CORREO (opcional, formato email)',
+              'DIRECCION (opcional)',
+              'PARENTESCO (requerido)',
+              'OCUPACION (opcional)'
+            ]
           },
         })
       }
@@ -860,11 +889,25 @@ export default class EstudianteController {
         return response.status(400).json({
           success: false,
           message: 'No hay estudiantes válidos en el archivo',
+          detalles: `Se procesaron ${resultadoEstudiantes.totalRows} filas pero todas tienen errores`,
           data: {
+            totalFilas: resultadoEstudiantes.totalRows,
+            filasValidas: 0,
+            filasInvalidas: resultadoEstudiantes.invalidRows.length,
             errores: [
               ...resultadoAcudientes.invalidRows,
               ...resultadoEstudiantes.invalidRows,
             ],
+            columnasEsperadas: [
+              'TIPO DOCUMENTO (o tipo_documento)',
+              'NUMERO DOCUMENTO (o numero_documento)',
+              'NOMBRES',
+              'APELLIDOS',
+              'FECHA DE NACIMIENTO (formato: YYYY/MM/DD o DD/MM/YYYY)',
+              'SEXO (M o F, opcional)',
+              'CURSO (ejemplo: 2A, 11-2)',
+              'DOCUMENTO ACUDIENTE (debe existir en archivo de acudientes)'
+            ]
           },
         })
       }
@@ -1087,10 +1130,27 @@ export default class EstudianteController {
       })
     } catch (error) {
       console.error('Error en carga masiva dual:', error)
+      
+      // Proporcionar mensaje más detallado según el tipo de error
+      let mensajeError = 'Error al procesar los archivos'
+      let detalles = error.message
+      
+      if (error.message?.includes('ENOENT')) {
+        mensajeError = 'No se pudo leer uno de los archivos'
+        detalles = 'Verifique que los archivos se hayan cargado correctamente'
+      } else if (error.message?.includes('Invalid file')) {
+        mensajeError = 'Formato de archivo inválido'
+        detalles = 'Asegúrese de que los archivos sean Excel (.xlsx, .xls) válidos'
+      } else if (error.code === '23505') {
+        mensajeError = 'Error de duplicados en la base de datos'
+        detalles = 'Algunos registros ya existen en el sistema'
+      }
+      
       return response.status(500).json({
         success: false,
-        message: 'Error al realizar carga masiva dual',
-        error: error.message,
+        message: mensajeError,
+        detalles: detalles,
+        errorTecnico: error.message,
       })
     }
   }
