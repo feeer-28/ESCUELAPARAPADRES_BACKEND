@@ -1965,6 +1965,8 @@ export default class MovilController {
           success: false,
           message: 'No autenticado',
         })
+      }
+      
       const { page = 1, limit = 20, tipo, leida } = request.qs()
       
       let query = db.from('notificaciones_push')
@@ -1980,8 +1982,6 @@ export default class MovilController {
         query = query.where('leida', leida === 'true')
       }
 
-      const page = request.input('page', 1)
-      const limit = request.input('limit', 20)
       // Paginación
       const offset = (Number(page) - 1) * Number(limit)
       const notificaciones = await query.limit(Number(limit)).offset(offset)
@@ -1994,14 +1994,6 @@ export default class MovilController {
         .count('* as total')
         .first()
 
-      const notificaciones = await Notificacion.query()
-        .where('destinatario_id', jwtUser.id)
-        .orderBy('creado_en', 'desc')
-        .paginate(page, limit)
-
-      const noLeidas = await Notificacion.query()
-        .where('destinatario_id', jwtUser.id)
-        .whereNull('leido_en')
       // Contar no leídas
       const noLeidasCount = await db.from('notificaciones_push')
         .where('usuario_id', jwtUser.id)
@@ -2009,28 +2001,19 @@ export default class MovilController {
         .count('* as total')
         .first()
 
-      const data = notificaciones.all().map((n) => ({
-        id: n.id,
-        tipo: n.tipo,
-        titulo: n.asunto || this.getTituloNotificacion(n.tipo),
-        mensaje: n.mensaje,
-        datos: n.metadatos,
-        leida: n.leidoEn !== null,
-        leidaEn: n.leidoEn?.toISO(),
-        creadaEn: n.creadoEn?.toISO(),
-      }))
-
-      return response.status(200).json({
       return response.json({
         success: true,
-        data,
-        data: notificaciones,
+        data: notificaciones.map((n) => ({
+          id: n.id,
+          tipo: n.tipo,
+          titulo: n.asunto || this.getTituloNotificacion(n.tipo),
+          mensaje: n.mensaje,
+          datos: n.metadatos,
+          leida: n.leida,
+          leidaEn: n.leida_en,
+          creadaEn: n.creada_en,
+        })),
         meta: {
-          total: notificaciones.total,
-          noLeidas: Number(noLeidas[0]?.$extras?.total || 0),
-          page: notificaciones.currentPage,
-          limit: notificaciones.perPage,
-        },
           total: Number(totalCount?.total || 0),
           noLeidas: Number(noLeidasCount?.total || 0),
           page: Number(page),
@@ -2042,7 +2025,6 @@ export default class MovilController {
       console.error('Error al listar notificaciones:', error)
       return response.status(500).json({
         success: false,
-        message: 'Error al procesar la solicitud',
         message: 'Error al listar notificaciones',
         error: error.message
       })
@@ -2074,11 +2056,9 @@ export default class MovilController {
           message: 'No autenticado',
         })
       }
+      
       const notificacionId = params.id
 
-      const notificacion = await Notificacion.query()
-        .where('id', params.id)
-        .where('destinatario_id', jwtUser.id)
       // Verificar que la notificación exista y pertenezca al usuario
       const notificacion = await db.from('notificaciones_push')
         .where('id', notificacionId)
@@ -2088,14 +2068,10 @@ export default class MovilController {
       if (!notificacion) {
         return response.status(404).json({
           success: false,
-          message: 'Notificación no encontrada',
           message: 'Notificación no encontrada'
         })
       }
 
-      notificacion.leidoEn = DateTime.now()
-      notificacion.estado = 'leida'
-      await notificacion.save()
       if (notificacion.leida) {
         return response.json({
           success: true,
@@ -2104,7 +2080,6 @@ export default class MovilController {
         })
       }
 
-      return response.status(200).json({
       // Marcar como leída
       await db.from('notificaciones_push')
         .where('id', notificacionId)
@@ -2124,11 +2099,9 @@ export default class MovilController {
         data: notificacionActualizada
       })
     } catch (error) {
-      console.error('Error al marcar leída:', error)
       console.error('Error al marcar notificación como leída:', error)
       return response.status(500).json({
         success: false,
-        message: 'Error al procesar la solicitud',
         message: 'Error al marcar notificación como leída',
         error: error.message
       })
@@ -2136,8 +2109,6 @@ export default class MovilController {
   }
 
   /**
-   * HU-39: Marcar todas como leídas
-   * PUT /notificaciones/leer-todas
    * HU-39: Marcar todas las notificaciones como leídas
    * PUT /api/movil/notificaciones/leer-todas
    */
@@ -2147,6 +2118,9 @@ export default class MovilController {
         return response.status(401).json({
           success: false,
           message: 'No autenticado',
+        })
+      }
+
       // Contar notificaciones no leídas
       const noLeidasCount = await db.from('notificaciones_push')
         .where('usuario_id', jwtUser.id)
@@ -2164,34 +2138,24 @@ export default class MovilController {
         })
       }
 
-      const updated = await db
-        .from('notificaciones')
-        .where('destinatario_id', jwtUser.id)
-        .whereNull('leido_en')
       // Marcar todas como leídas
       await db.from('notificaciones_push')
         .where('usuario_id', jwtUser.id)
         .where('leida', false)
         .update({
-          leido_en: DateTime.now().toSQL(),
-          estado: 'leida',
           leida: true,
           leida_en: DateTime.now().toSQL()
         })
 
-      return response.status(200).json({
       return response.json({
         success: true,
-        message: `${updated} notificaciones marcadas como leídas`,
         message: `${cantidad} notificaciones marcadas como leídas`,
         data: { cantidad }
       })
     } catch (error) {
-      console.error('Error al marcar todas leídas:', error)
       console.error('Error al marcar todas las notificaciones como leídas:', error)
       return response.status(500).json({
         success: false,
-        message: 'Error al procesar la solicitud',
         message: 'Error al marcar notificaciones como leídas',
         error: error.message
       })
