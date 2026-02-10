@@ -236,7 +236,7 @@ export default class DocenteScopeController {
     entregasQuery.orderBy(sortConf.col as any, sortConf.dir)
 
     if (onlyPending) {
-      entregasQuery.where('estado', 'enviada').whereDoesntHave('calificacion')
+      entregasQuery.where('estado', 'enviada').whereDoesntHave('calificacion', () => {})
     }
 
     const paginated = await entregasQuery.paginate(page, perPage)

@@ -1,6 +1,5 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import DispositivoMovil from '#models/dispositivo_movil_v2'
-import { validator, rules } from '@adonisjs/validator'
 
 export default class DispositivosV2Controller {
   /**
@@ -8,6 +7,13 @@ export default class DispositivosV2Controller {
    */
   async registrar({ request, response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado',
+        })
+      }
+
       const payload = request.only([
         'token_fcm',
         'plataforma',
@@ -16,17 +22,20 @@ export default class DispositivosV2Controller {
         'version_os'
       ])
 
-      // Validación
-      await validator.validate({
-        schema: validator.schema({
-          token_fcm: validator.string([rules.required(), rules.maxLength(255)]),
-          plataforma: validator.enum(DispositivoMovil.plataformas(), [rules.required()]),
-          version_app: validator.string([rules.maxLength(50)]).optional(),
-          modelo_dispositivo: validator.string([rules.maxLength(100)]).optional(),
-          version_os: validator.string([rules.maxLength(50)]).optional()
-        }),
-        data: payload
-      })
+      // Validación básica
+      if (!payload.token_fcm) {
+        return response.status(400).json({
+          success: false,
+          message: 'Token FCM es requerido',
+        })
+      }
+
+      if (!payload.plataforma) {
+        return response.status(400).json({
+          success: false,
+          message: 'Plataforma es requerida',
+        })
+      }
 
       // Verificar si ya existe el token para este usuario
       const dispositivoExistente = await DispositivoMovil.query()
@@ -87,6 +96,13 @@ export default class DispositivosV2Controller {
    */
   async eliminar({ request, response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const { token_fcm } = request.only(['token_fcm'])
 
       if (!token_fcm) {
@@ -128,6 +144,13 @@ export default class DispositivosV2Controller {
    */
   async index({ response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const dispositivos = await DispositivoMovil.activosPorUsuario(jwtUser.id)
 
       return response.json({
@@ -152,6 +175,13 @@ export default class DispositivosV2Controller {
    */
   async actualizar({ request, response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const { token_fcm, version_app, modelo_dispositivo, version_os } = request.only([
         'token_fcm',
         'version_app',
@@ -206,6 +236,13 @@ export default class DispositivosV2Controller {
    */
   async desactivarTodos({ response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       await DispositivoMovil.query()
         .where('usuario_id', jwtUser.id)
         .update({ activo: false })
@@ -228,6 +265,13 @@ export default class DispositivosV2Controller {
    */
   async estadisticas({ response, jwtUser }: HttpContext) {
     try {
+      if (!jwtUser) {
+        return response.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        })
+      }
+
       const total = await DispositivoMovil.query()
         .where('usuario_id', jwtUser.id)
         .count('* as total')
@@ -245,7 +289,7 @@ export default class DispositivosV2Controller {
       return response.json({
         success: true,
         data: {
-          total: total?.total || 0,
+          total: total?.$extras?.total || 0,
           activos: activos.length,
           porPlataforma: porPlataforma.map(item => ({
             plataforma: item.plataforma,

@@ -81,22 +81,23 @@ export default class AcudienteController {
   }
 
   async resetPassword({ request, response }: HttpContext) {
-    const telefono = String(request.input('telefono') ?? '').trim()
     const numeroDocumento = String(
       request.input('numeroDocumento') ?? request.input('numero_documento') ?? ''
     ).trim()
 
-    if (!telefono || !numeroDocumento) {
-      return response.badRequest({ message: 'telefono y numeroDocumento son requeridos' })
+    if (!numeroDocumento) {
+      return response.badRequest({ message: 'numeroDocumento es requerido' })
     }
 
+    const normalize = (value: string) => value.replace(/\D+/g, '')
+    const documentoNormalizado = normalize(numeroDocumento)
+
     const acudiente = await Acudiente.query()
-      .where('telefono', telefono)
-      .andWhere('numero_documento', numeroDocumento)
+      .where('numero_documento', documentoNormalizado)
       .first()
 
     if (!acudiente) {
-      return response.notFound({ message: 'Acudiente no encontrado con esos datos' })
+      return response.notFound({ message: 'Acudiente no encontrado con ese número de documento' })
     }
 
     const usuario = await Usuario.find(acudiente.usuarioId)
@@ -104,13 +105,14 @@ export default class AcudienteController {
       return response.notFound({ message: 'Usuario no encontrado para este acudiente' })
     }
 
-    const plainPassword = numeroDocumento
-    usuario.contrasenaHash = plainPassword
-    usuario.debeCambiarContrasena = true
+    // Resetear la contraseña al número de documento
+    usuario.contrasenaHash = documentoNormalizado
+    // NO marcar cambio obligatorio para acudientes
+    usuario.debeCambiarContrasena = false
     await usuario.save()
 
     const usuarioRecargado = await Usuario.findOrFail(usuario.id)
-    const verifyAfterSave = await hash.verify(usuarioRecargado.contrasenaHash, numeroDocumento)
+    const verifyAfterSave = await hash.verify(usuarioRecargado.contrasenaHash, documentoNormalizado)
 
     const debug = app.inProduction
       ? undefined
@@ -119,9 +121,7 @@ export default class AcudienteController {
           hashLength: usuarioRecargado.contrasenaHash?.length,
           hashPrefix: usuarioRecargado.contrasenaHash?.slice(0, 25),
           hashSuffix: usuarioRecargado.contrasenaHash?.slice(-10),
-          plainPasswordLength: plainPassword.length,
-          telefono,
-          numeroDocumentoLength: numeroDocumento.length,
+          numeroDocumentoLength: documentoNormalizado.length,
         }
 
     if (!verifyAfterSave) {
@@ -131,91 +131,86 @@ export default class AcudienteController {
       })
     }
 
-    return response.ok({ message: 'Contraseña reseteada', correo: usuarioRecargado.correo, debug })
+    return response.ok({ 
+      message: 'Contraseña reseteada a su número de documento', 
+      correo: usuarioRecargado.correo, 
+      debug 
+    })
   }
 
   async login({ request, response }: HttpContext) {
-    const correo = String(request.input('correo') ?? '').trim()
+    const numeroDocumento = String(request.input('numeroDocumento') ?? request.input('correo') ?? '').trim()
     const contrasena = String(request.input('contrasena') ?? '').trim()
 
-    if (!correo || !contrasena) {
-      return response.badRequest({ message: 'correo y contrasena son requeridos' })
+    if (!numeroDocumento || !contrasena) {
+      return response.badRequest({ message: 'numeroDocumento y contrasena son requeridos' })
     }
 
     const normalize = (value: string) => value.replace(/\D+/g, '')
+    const documentoNormalizado = normalize(numeroDocumento)
 
-    let usuario: Usuario | null = null
-    let foundBy: 'acudiente.telefono' | 'usuario.correo' | null = null
-
-    const acudientes = await Acudiente.query().where('telefono', correo)
+    // Buscar acudiente por número de documento
+    const acudientes = await Acudiente.query().where('numero_documento', documentoNormalizado)
     const acudiente = acudientes.length === 1 ? acudientes[0] : null
 
     if (acudientes.length > 1) {
       const debug = app.inProduction
         ? undefined
         : {
-            telefono: correo,
+            numeroDocumento: documentoNormalizado,
             coincidencias: acudientes.map((a) => ({
               acudienteId: a.id,
               usuarioId: a.usuarioId,
-              numeroDocumentoLength: a.numeroDocumento?.length,
-              numeroDocumentoLast4: a.numeroDocumento ? normalize(a.numeroDocumento).slice(-4) : undefined,
+              nombres: a.nombres,
+              apellidos: a.apellidos,
             })),
           }
 
       return response.conflict({
-        message: 'Hay más de un acudiente con el mismo telefono. Debes corregir datos duplicados.',
+        message: 'Hay más de un acudiente con el mismo número de documento. Debes corregir datos duplicados.',
         debug,
       })
     }
 
-    if (acudiente) {
-      usuario = await Usuario.find(acudiente.usuarioId)
-      foundBy = 'acudiente.telefono'
+    if (!acudiente) {
+      return response.unauthorized({ message: 'Número de documento no encontrado' })
     }
 
+    let usuario = await Usuario.find(acudiente.usuarioId)
+    
     if (!usuario) {
-      usuario = await Usuario.query().where('correo', correo).first()
-      foundBy = usuario ? 'usuario.correo' : null
-    }
-
-    if (!usuario) {
-      return response.unauthorized({ message: 'Usuario no existe' })
+      return response.unauthorized({ message: 'Usuario no encontrado' })
     }
 
     let ok = await hash.verify(usuario.contrasenaHash, contrasena)
 
-    let matchesDocumento: boolean | undefined = undefined
-    let verifyAfterRehash: boolean | undefined = undefined
-
-    if (!ok && acudiente && foundBy === 'acudiente.telefono') {
-      matchesDocumento = normalize(contrasena) === normalize(acudiente.numeroDocumento)
+    // Si la contraseña no coincide, verificar si está usando su documento como contraseña (primera vez)
+    if (!ok) {
+      const matchesDocumento = normalize(contrasena) === documentoNormalizado
 
       if (matchesDocumento) {
-        usuario.contrasenaHash = acudiente.numeroDocumento
-        usuario.debeCambiarContrasena = true
+        // Primera vez que ingresa - hashear el documento como contraseña
+        usuario.contrasenaHash = documentoNormalizado
+        // NO marcar cambio obligatorio para acudientes
+        usuario.debeCambiarContrasena = false
         await usuario.save()
 
         const usuarioRecargado = await Usuario.findOrFail(usuario.id)
         usuario = usuarioRecargado
-        verifyAfterRehash = await hash.verify(usuario.contrasenaHash, acudiente.numeroDocumento)
-        ok = verifyAfterRehash
+        ok = await hash.verify(usuario.contrasenaHash, documentoNormalizado)
 
-        if (verifyAfterRehash === false) {
+        if (!ok) {
           const debug = app.inProduction
             ? undefined
             : {
-                foundBy,
                 usuarioId: usuario.id,
-                verifyAfterRehash,
-                matchesDocumento,
                 hashLength: usuario.contrasenaHash?.length,
                 hashPrefix: usuario.contrasenaHash?.slice(0, 25),
                 hashSuffix: usuario.contrasenaHash?.slice(-10),
               }
 
           return response.internalServerError({
-            message: 'La verificación falló incluso después de sincronizar la contraseña. Revisar datos en BD.',
+            message: 'La verificación falló después de hashear la contraseña. Revisar datos en BD.',
             debug,
           })
         }
@@ -228,15 +223,12 @@ export default class AcudienteController {
         : {
             hashLength: usuario.contrasenaHash?.length,
             hashPrefix: usuario.contrasenaHash?.slice(0, 25),
-            foundBy,
             usuarioId: usuario.id,
             contrasenaLength: contrasena.length,
             contrasenaNormalizedLength: normalize(contrasena).length,
-            numeroDocumentoLength: acudiente?.numeroDocumento?.length,
-            numeroDocumentoNormalizedLength: acudiente?.numeroDocumento ? normalize(acudiente.numeroDocumento).length : undefined,
-            matchesDocumento,
+            numeroDocumentoLength: documentoNormalizado.length,
             contrasenaLast4: normalize(contrasena).slice(-4),
-            numeroDocumentoLast4: acudiente?.numeroDocumento ? normalize(acudiente.numeroDocumento).slice(-4) : undefined,
+            numeroDocumentoLast4: documentoNormalizado.slice(-4),
           }
 
       return response.unauthorized({ message: 'Contraseña incorrecta', debug })

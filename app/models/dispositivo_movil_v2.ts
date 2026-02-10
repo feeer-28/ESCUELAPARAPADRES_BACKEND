@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon'
-import { BaseModel, column, manyToOne, BelongsTo } from '@adonisjs/lucid/orm'
+import { BaseModel, column, belongsTo } from '@adonisjs/lucid/orm'
+import type { BelongsTo } from '@adonisjs/lucid/types/relations'
 import Usuario from '#models/usuario'
 
 export default class DispositivoMovil extends BaseModel {
@@ -24,7 +25,7 @@ export default class DispositivoMovil extends BaseModel {
   @column()
   declare versionOs: string | null
 
-  @column.boolean()
+  @column()
   declare activo: boolean
 
   @column.dateTime()
@@ -37,7 +38,7 @@ export default class DispositivoMovil extends BaseModel {
   declare actualizadoEn: DateTime
 
   // Relación con usuario
-  @ManyToOne(() => Usuario, {
+  @belongsTo(() => Usuario, {
     foreignKey: 'usuarioId'
   })
   declare usuario: BelongsTo<typeof Usuario>

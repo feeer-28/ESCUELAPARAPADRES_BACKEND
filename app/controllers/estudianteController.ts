@@ -808,7 +808,6 @@ export default class EstudianteController {
       if (!archivoEstudiantes.isValid) {
         const detallesError = archivoEstudiantes.errors.map(error => ({
           campo: error.fieldName,
-          regla: error.rule,
           mensaje: error.message
         }))
         
@@ -823,7 +822,6 @@ export default class EstudianteController {
       if (!archivoAcudientes.isValid) {
         const detallesError = archivoAcudientes.errors.map(error => ({
           campo: error.fieldName,
-          regla: error.rule,
           mensaje: error.message  
         }))
         
