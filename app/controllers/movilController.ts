@@ -283,10 +283,6 @@ export default class MovilController {
           usuario.debeCambiarContrasena = false
           await usuario.save()
 
-          // Recargar usuario desde BD (importante para verificación)
-          const usuarioRecargado = await Usuario.findOrFail(usuario.id)
-          usuario = usuarioRecargado
-
           // Verificar nuevamente con el password normalizado
           isPasswordValid = await hash.verify(usuario.contrasenaHash, documentoNormalizado)
         }
