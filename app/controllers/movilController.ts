@@ -233,25 +233,26 @@ export default class MovilController {
         .first()
 
       console.log('👤 Acudiente encontrado:', acudiente ? 'SÍ' : 'NO')
-      if (acudiente) {
-        console.log('👤 ID acudiente:', acudiente.id)
-        console.log('👤 Usuario ID:', acudiente.usuarioId)
-      }
 
       if (!acudiente) {
         return response.status(401).json({
           success: false,
-          message: 'Documento o contraseÃ±a incorrectos',
+          message: 'Documento o contraseña incorrectos',
         })
       }
 
-      let usuario = acudiente.usuario
+      const usuario = acudiente.usuario
       if (!usuario) {
         return response.status(401).json({
           success: false,
           message: 'Usuario no encontrado para este acudiente',
         })
       }
+
+      console.log('👤 ID acudiente:', acudiente.id)
+      console.log('👤 Usuario ID:', usuario.id)
+      console.log('🔑 Rol ID:', usuario.rolId)
+      console.log('🟢 Activo:', usuario.estaActivo)
 
       // Verificar que sea rol acudiente (rolId: 6)
       if (usuario.rolId !== 6) {
@@ -261,7 +262,7 @@ export default class MovilController {
         })
       }
 
-      // Verificar que estÃ© activo
+      // Verificar que esté activo
       if (!usuario.estaActivo) {
         return response.status(403).json({
           success: false,
@@ -269,33 +270,52 @@ export default class MovilController {
         })
       }
 
-      // Verificar contraseña
-      let isPasswordValid = await hash.verify(usuario.contrasenaHash, password)
+      console.log('🔑 Hash actual existe:', usuario.contrasenaHash ? 'SÍ' : 'NO')
 
-      // Si la contraseña no coincide, verificar si está usando su documento como contraseña (primera vez)
-      if (!isPasswordValid) {
+      // Si no tiene hash, es primera vez - usar documento como password
+      let isPasswordValid = false
+      
+      if (!usuario.contrasenaHash || usuario.contrasenaHash.trim() === '') {
+        // Primera vez - hashear el documento
         const passwordNormalizado = normalize(password)
-        const matchesDocumento = passwordNormalizado === documentoNormalizado
-
-        if (matchesDocumento) {
-          // Primera vez que ingresa - hashear el documento como contraseña
+        if (passwordNormalizado === documentoNormalizado) {
+          console.log('🔐 Primera vez - generando hash...')
           usuario.contrasenaHash = await hash.make(documentoNormalizado)
           usuario.debeCambiarContrasena = false
           await usuario.save()
-
-          // Verificar nuevamente con el password normalizado
-          isPasswordValid = await hash.verify(usuario.contrasenaHash, documentoNormalizado)
+          isPasswordValid = true
+          console.log('✅ Hash generado exitosamente')
+        }
+      } else {
+        // Verificar contraseña existente  
+        isPasswordValid = await hash.verify(usuario.contrasenaHash, password)
+        console.log('🔍 Verificación hash existente:', isPasswordValid)
+        
+        // Si falla, intentar con documento (por si cambió la lógica)
+        if (!isPasswordValid) {
+          const passwordNormalizado = normalize(password)
+          if (passwordNormalizado === documentoNormalizado) {
+            console.log('🔄 Intentando con documento normalizado...')
+            usuario.contrasenaHash = await hash.make(documentoNormalizado)
+            usuario.debeCambiarContrasena = false
+            await usuario.save()
+            isPasswordValid = true
+            console.log('✅ Hash actualizado exitosamente')
+          }
         }
       }
 
       if (!isPasswordValid) {
+        console.log('❌ Login fallido - contraseña incorrecta')
         return response.status(401).json({
           success: false,
           message: 'Documento o contraseña incorrectos',
         })
       }
 
-      // Actualizar Ãºltimo ingreso
+      console.log('✅ Login exitoso - generando token...')
+
+      // Actualizar último ingreso
       usuario.ultimoIngreso = DateTime.now()
       await usuario.save()
 
