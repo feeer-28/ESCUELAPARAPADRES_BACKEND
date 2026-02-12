@@ -85,6 +85,13 @@ router
          * Output: Array de estudiantes con curso e institución
          */
         router.get('/acudientes/mis-estudiantes', [MovilController, 'misEstudiantes'])
+        
+        /**
+         * GET /estudiantes
+         * Alias para app móvil - mismo que /acudientes/mis-estudiantes
+         * Con prefijo /api/movil se convierte en /api/movil/estudiantes
+         */
+        router.get('/estudiantes', [MovilController, 'misEstudiantes'])
 
         /**
          * GET /estudiantes/:id/perfil

@@ -708,11 +708,15 @@ export default class MovilController {
         })
       }
 
-      const data = acudiente.estudiantes.map((est) => ({
+      const estudiantes = acudiente.estudiantes.map((est) => ({
         id: est.id,
-        firstName: est.nombres,
-        lastName: est.apellidos,
+        nombres: est.nombres,
+        apellidos: est.apellidos,
         documento: est.numeroDocumento,
+        fechaNacimiento: est.fechaNacimiento?.toFormat('yyyy-MM-dd') || null,
+        grado: est.curso?.grado?.nombre || null,
+        firstName: est.nombres, // backward compatibility
+        lastName: est.apellidos, // backward compatibility
         foto: null,
         curso: {
           id: est.curso?.id,
@@ -728,12 +732,17 @@ export default class MovilController {
         esPrincipal: est.$extras.pivot_es_principal || false,
       }))
 
-      // Ordenar: principal primero, luego alfabÃ©tico
-      data.sort((a, b) => {
+      // Ordenar: principal primero, luego alfabético
+      estudiantes.sort((a, b) => {
         if (a.esPrincipal && !b.esPrincipal) return -1
         if (!a.esPrincipal && b.esPrincipal) return 1
         return a.firstName.localeCompare(b.firstName)
       })
+
+      // Estructura adaptada para app móvil: 1 estudiante = objeto, múltiples = array
+      const data = estudiantes.length === 1 
+        ? { estudiante: estudiantes[0] }
+        : { estudiantes }
 
       return response.status(200).json({
         success: true,
