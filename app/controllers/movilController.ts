@@ -218,18 +218,10 @@ export default class MovilController {
       console.log('📄 Documento normalizado:', documentoNormalizado)
       console.log('🔑 Password:', password)
 
-      // Buscar acudiente por número de documento normalizado
+      // Buscar acudiente por número de documento normalizado - OPTIMIZADO
       const acudiente = await Acudiente.query()
         .where('numero_documento', documentoNormalizado)
-        .preload('usuario', (query) => {
-          query.preload('rol')
-        })
-        .preload('estudiantes', (query) => {
-          query.preload('curso', (q) => {
-            q.preload('grado')
-            q.preload('institucion')
-          })
-        })
+        .preload('usuario')
         .first()
 
       console.log('👤 Acudiente encontrado:', acudiente ? 'SÍ' : 'NO')
@@ -318,6 +310,14 @@ export default class MovilController {
       // Actualizar último ingreso
       usuario.ultimoIngreso = DateTime.now()
       await usuario.save()
+
+      // Cargar estudiantes SOLO después de validación exitosa
+      await acudiente.load('estudiantes', (query) => {
+        query.preload('curso', (q) => {
+          q.preload('grado')
+          q.preload('institucion')
+        })
+      })
 
       // Generar token JWT
       const jwtSecret = env.get('JWT_SECRET') || env.get('APP_KEY')
