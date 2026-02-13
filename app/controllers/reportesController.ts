@@ -348,4 +348,220 @@ export default class ReportesController {
       },
     })
   }
+
+  /**
+   * Reporte 1: Estudiantes por Curso/Grado/Jornada (a nivel institución del usuario)
+   * GET /reportes/institucion/estudiantes-por-curso
+   * Optional filters: gradoId, jornada
+   */
+  async estudiantesPorCursoInstitucion({ response, jwtUser, request }: HttpContext) {
+    let institucionId: number | null = null
+
+    if (jwtUser) {
+      const funcionario = await Funcionario.query().where('usuario_id', jwtUser.id).first()
+      institucionId = funcionario?.institucionId || null
+    }
+
+    if (!institucionId) {
+      return response.badRequest({ success: false, message: 'No se pudo determinar la institución' })
+    }
+
+    const gradoId = request.input('gradoId') ?? request.input('grado')
+    const jornada = request.input('jornada')
+
+    let cursosQuery = db.from('cursos as c').where('c.institucion_id', institucionId)
+    if (gradoId) cursosQuery = cursosQuery.where('c.grado_id', gradoId)
+    if (jornada) cursosQuery = cursosQuery.where('c.jornada', jornada)
+
+    const cursos = await cursosQuery.select('c.id', 'c.nombre', 'c.grado_id', 'c.jornada')
+
+    // Conteo de estudiantes por curso
+    const resultados = await Promise.all(
+      cursos.map(async (c) => {
+        const countRes = await db
+          .from('estudiantes as e')
+          .where('e.curso_id', c.id)
+          .whereNull('e.eliminado_en')
+          .count('e.id as total')
+        const total = Number(countRes[0]?.total || 0)
+        return {
+          cursoId: c.id,
+          curso: c.nombre,
+          gradoId: c.grado_id,
+          jornada: c.jornada,
+          totalEstudiantes: total,
+        }
+      })
+    )
+
+    // Totales por grado y por jornada
+    const porGrado: Record<string, number> = {}
+    const porJornada: Record<string, number> = {}
+    resultados.forEach((r) => {
+      porGrado[String(r.gradoId)] = (porGrado[String(r.gradoId)] ?? 0) + r.totalEstudiantes
+      porJornada[String(r.jornada)] = (porJornada[String(r.jornada)] ?? 0) + r.totalEstudiantes
+    })
+
+    const totalEstudiantes = resultados.reduce((a, b) => a + b.totalEstudiantes, 0)
+
+    return response.ok({
+      success: true,
+      data: {
+        institucionId,
+        filtros: { gradoId: gradoId ? Number(gradoId) : null, jornada: jornada ?? null },
+        resumen: { totalEstudiantes, porGrado, porJornada },
+        cursos: resultados,
+      },
+    })
+  }
+
+  /**
+   * Reporte 6: Alertas Académicas por umbral y período (a nivel institución)
+   * GET /reportes/institucion/alertas-academicas
+   * Query: periodoId (opcional pero recomendado), umbral (default 3.0), cursoId (opcional)
+   */
+  async alertasAcademicasInstitucion({ response, jwtUser, request }: HttpContext) {
+    let institucionId: number | null = null
+    if (jwtUser) {
+      const funcionario = await Funcionario.query().where('usuario_id', jwtUser.id).first()
+      institucionId = funcionario?.institucionId || null
+    }
+
+    if (!institucionId) {
+      return response.badRequest({ success: false, message: 'No se pudo determinar la institución' })
+    }
+
+    const periodoId = request.input('periodoId') ?? request.input('periodo')
+    const umbral = parseFloat(String(request.input('umbral') ?? '3.0'))
+    const cursoId = request.input('cursoId') ?? request.input('curso')
+
+    let query = db
+      .from('calificaciones as c')
+      .join('estudiantes as e', 'c.estudiante_id', 'e.id')
+      .join('cursos as cu', 'e.curso_id', 'cu.id')
+      .where('cu.institucion_id', institucionId)
+      .whereNotNull('c.nota')
+      .where('c.nota', '<', umbral)
+      .select(
+        'e.id as estudianteId',
+        'e.nombres',
+        'e.apellidos',
+        'cu.id as cursoId',
+        'cu.nombre as curso',
+        'c.nota',
+        'c.asignacion_id as asignacionId',
+        'c.periodo_id as periodoId'
+      )
+
+    if (periodoId) query = query.where('c.periodo_id', periodoId)
+    if (cursoId) query = query.where('cu.id', cursoId)
+
+    const filas = await query.orderBy('cu.nombre').orderBy('e.apellidos')
+
+    // Agrupar por curso y por estudiante
+    const porCurso: Record<number, { cursoId: number; curso: string; estudiantes: Record<number, any> }> = {}
+    filas.forEach((f) => {
+      if (!porCurso[f.cursoId]) {
+        porCurso[f.cursoId] = { cursoId: f.cursoId, curso: f.curso, estudiantes: {} }
+      }
+      const porEst = porCurso[f.cursoId].estudiantes
+      if (!porEst[f.estudianteId]) {
+        porEst[f.estudianteId] = {
+          id: f.estudianteId,
+          nombre: `${f.nombres} ${f.apellidos}`,
+          alertas: [],
+        }
+      }
+      porEst[f.estudianteId].alertas.push({ asignacionId: f.asignacionId, nota: f.nota, periodoId: f.periodoId })
+    })
+
+    const cursos = Object.values(porCurso).map((c) => ({
+      cursoId: c.cursoId,
+      curso: c.curso,
+      totalEstudiantesAlerta: Object.keys(c.estudiantes).length,
+      estudiantes: Object.values(c.estudiantes),
+    }))
+
+    const totalEstudiantesAlerta = cursos.reduce((a, b) => a + b.totalEstudiantesAlerta, 0)
+
+    return response.ok({
+      success: true,
+      data: {
+        institucionId,
+        filtros: { periodoId: periodoId ? Number(periodoId) : null, umbral, cursoId: cursoId ? Number(cursoId) : null },
+        totalEstudiantesAlerta,
+        cursos,
+      },
+    })
+  }
+
+  /**
+   * Reporte 7: Estudiantes sin calificaciones en el período (a nivel institución)
+   * GET /reportes/institucion/sin-calificaciones
+   * Query: periodoId (requerido para precisión), cursoId (opcional)
+   */
+  async estudiantesSinCalificacionesInstitucion({ response, jwtUser, request }: HttpContext) {
+    let institucionId: number | null = null
+    if (jwtUser) {
+      const funcionario = await Funcionario.query().where('usuario_id', jwtUser.id).first()
+      institucionId = funcionario?.institucionId || null
+    }
+
+    if (!institucionId) {
+      return response.badRequest({ success: false, message: 'No se pudo determinar la institución' })
+    }
+
+    const periodoId = request.input('periodoId') ?? request.input('periodo')
+    const cursoId = request.input('cursoId') ?? request.input('curso')
+
+    // Listado base de estudiantes de la institución (y curso si aplica)
+    let baseQuery = db
+      .from('estudiantes as e')
+      .join('cursos as c', 'e.curso_id', 'c.id')
+      .where('c.institucion_id', institucionId)
+      .whereNull('e.eliminado_en')
+      .select('e.id as estudianteId', 'e.nombres', 'e.apellidos', 'c.id as cursoId', 'c.nombre as curso')
+
+    if (cursoId) baseQuery = baseQuery.where('c.id', cursoId)
+
+    const estudiantes = await baseQuery
+
+    if (!estudiantes.length) {
+      return response.ok({ success: true, data: { institucionId, filtros: { periodoId: periodoId ? Number(periodoId) : null, cursoId: cursoId ? Number(cursoId) : null }, total: 0, estudiantes: [] } })
+    }
+
+    // Estudiantes que sí tienen calificaciones en el periodo
+    let califQuery = db
+      .from('calificaciones as cal')
+      .whereIn('cal.estudiante_id', estudiantes.map((e) => e.estudianteId))
+      .select('cal.estudiante_id as estudianteId')
+      .groupBy('cal.estudiante_id')
+
+    if (periodoId) califQuery = califQuery.where('cal.periodo_id', periodoId)
+
+    const conCalif = await califQuery
+    const conCalifSet = new Set<number>(conCalif.map((r) => Number(r.estudianteId)))
+
+    const sinCalif = estudiantes.filter((e) => !conCalifSet.has(Number(e.estudianteId)))
+
+    // Agrupar por curso
+    const porCurso: Record<number, { cursoId: number; curso: string; total: number; estudiantes: any[] }> = {}
+    sinCalif.forEach((e) => {
+      if (!porCurso[e.cursoId]) porCurso[e.cursoId] = { cursoId: e.cursoId, curso: e.curso, total: 0, estudiantes: [] }
+      porCurso[e.cursoId].estudiantes.push({ id: e.estudianteId, nombre: `${e.nombres} ${e.apellidos}` })
+      porCurso[e.cursoId].total++
+    })
+
+    const cursos = Object.values(porCurso)
+
+    return response.ok({
+      success: true,
+      data: {
+        institucionId,
+        filtros: { periodoId: periodoId ? Number(periodoId) : null, cursoId: cursoId ? Number(cursoId) : null },
+        total: sinCalif.length,
+        cursos,
+      },
+    })
+  }
 }
