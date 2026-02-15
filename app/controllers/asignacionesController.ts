@@ -23,12 +23,12 @@ import Role from '#models/role'
 
 import Usuario from '#models/usuario'
 
-import NotificationService from '#services/notification_service'
+import MovilController from '#controllers/movilController'
 
 
 
 export default class AsignacionesController {
- 
+
   private async enviarNotificacionesAsignacion(asignacion: Asignacion, cursoIds: number[]) {
     try {
       const estudiantes = await Estudiante.query()
@@ -46,18 +46,22 @@ export default class AsignacionesController {
         })
       })
 
-      if (acudienteUserIds.size > 0) {
-        await NotificationService.sendToMultipleUsers(
-          Array.from(acudienteUserIds),
-          'Nueva tarea asignada',
+      // Enviar notificación a cada padre (guarda en BD + envía push)
+      for (const userId of acudienteUserIds) {
+        await MovilController.enviarNotificacionPush(
+          userId,
+          '📚 Nueva Tarea Asignada',
           `Se ha asignado la tarea: ${asignacion.titulo}`,
+          'tarea',
           {
-            type: 'nueva_tarea',
-            asignacionId: asignacion.id.toString(),
-            titulo: asignacion.titulo,
+            asignacion_id: asignacion.id,
+            tipo: 'nueva_tarea',
+            fecha_vencimiento: asignacion.fechaVencimiento?.toISO(),
           }
         )
       }
+
+      console.log(`✅ Notificación de tarea enviada a ${acudienteUserIds.size} padres`)
     } catch (notifError) {
       console.error('Error al enviar notificaciones:', notifError)
     }

@@ -26,20 +26,23 @@ router
      */
     router.post('/auth/login/movil', [MovilController, 'loginMovil'])
 
-    /**
-     * POST /debug/acudiente - TEMPORAL para debugging  
-     */
-    router.post('/debug/acudiente', [MovilController, 'debugAcudiente'])
+    // Endpoints de debug - SOLO disponibles en desarrollo
+    if (process.env.NODE_ENV !== 'production') {
+      /**
+       * POST /debug/acudiente - TEMPORAL para debugging  
+       */
+      router.post('/debug/acudiente', [MovilController, 'debugAcudiente'])
 
-    /**
-     * POST /debug/resetear - TEMPORAL para resetear contraseña
-     */
-    router.post('/debug/resetear', [MovilController, 'resetearContrasena'])
+      /**
+       * POST /debug/resetear - TEMPORAL para resetear contraseña
+       */
+      router.post('/debug/resetear', [MovilController, 'resetearContrasena'])
 
-    /**
-     * POST /debug/test-hash - TEMPORAL para probar hash
-     */
-    router.post('/debug/test-hash', [MovilController, 'testHash'])
+      /**
+       * POST /debug/test-hash - TEMPORAL para probar hash
+       */
+      router.post('/debug/test-hash', [MovilController, 'testHash'])
+    }
 
     /**
      * POST /auth/cambiar-password
@@ -85,6 +88,13 @@ router
          * Output: Array de estudiantes con curso e institución
          */
         router.get('/acudientes/mis-estudiantes', [MovilController, 'misEstudiantes'])
+
+        /**
+         * GET /estudiantes
+         * Alias para app móvil - mismo que /acudientes/mis-estudiantes
+         * Con prefijo /api/movil se convierte en /api/movil/estudiantes
+         */
+        router.get('/estudiantes', [MovilController, 'misEstudiantes'])
 
         /**
          * GET /estudiantes/:id/perfil
@@ -201,6 +211,18 @@ router
          * HU-39: Marcar todas las notificaciones como leídas
          */
         router.put('/notificaciones/leer-todas', [MovilController, 'marcarTodasLeidas'])
+
+        /**
+         * DELETE /notificaciones/:id
+         * Eliminar una notificación individual
+         */
+        router.delete('/notificaciones/:id', [MovilController, 'eliminarNotificacion'])
+
+        /**
+         * DELETE /notificaciones
+         * Eliminar todas las notificaciones del usuario
+         */
+        router.delete('/notificaciones', [MovilController, 'eliminarTodasNotificaciones'])
 
         // --------------------------------------------------------
         // PREFERENCIAS DE USUARIO
