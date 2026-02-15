@@ -1,20 +1,21 @@
 ﻿import type { HttpContext } from '@adonisjs/core/http'
-import app from '@adonisjs/core/services/app'
+
 import hash from '@adonisjs/core/services/hash'
 import jwt from 'jsonwebtoken'
 import { DateTime } from 'luxon'
 import db from '@adonisjs/lucid/services/db'
-import { mkdir } from 'node:fs/promises'
+
 
 import Acudiente from '#models/acudiente'
 import Asignacion from '#models/asignacion'
 import Calificacion from '#models/calificacion'
 import Entrega from '#models/entrega'
 import Estudiante from '#models/estudiante'
-import Notificacion from '#models/notificacion'
+
 import Usuario from '#models/usuario'
 import env from '#start/env'
 import { getMessaging } from '#config/firebase'
+import OtpService from '#services/OtpService'
 
 export default class MovilController {
   // ============================================================
@@ -27,19 +28,19 @@ export default class MovilController {
   async testHash({ response }: HttpContext) {
     try {
       const testValue = '1061705869'
-      
+
       // Probar hash.make
       const hashed = await hash.make(testValue)
       console.log('🔧 Hash generado:', hashed)
-      
+
       // Probar hash.verify inmediatamente
       const verification1 = await hash.verify(hashed, testValue)
       console.log('🔍 Verificación inmediata:', verification1)
-      
+
       // Probar diferentes valores
       const verification2 = await hash.verify(hashed, '1061705869')
       const verification3 = await hash.verify(hashed, 'otroValor')
-      
+
       console.log('🔍 Verificación con mismo string:', verification2)
       console.log('🔍 Verificación con valor incorrecto:', verification3)
 
@@ -66,7 +67,7 @@ export default class MovilController {
   async resetearContrasena({ request, response }: HttpContext) {
     try {
       const documento = String(request.input('documento') ?? '').trim()
-      
+
       if (!documento) {
         return response.json({
           success: false,
@@ -93,25 +94,25 @@ export default class MovilController {
       // Resetear contraseña al documento
       const usuario = acudiente.usuario
       const hashAnterior = usuario.contrasenaHash
-      
+
       console.log('🔧 RESET DEBUG:')
       console.log('📄 Documento para hash:', JSON.stringify(documentoNormalizado))
       console.log('📏 Longitud documento:', documentoNormalizado.length)
       console.log('🔑 Caracteres del documento:', documentoNormalizado.split('').map(c => `${c}(${c.charCodeAt(0)})`))
-      
-      usuario.contrasenaHash = await hash.make(documentoNormalizado) 
+
+      usuario.contrasenaHash = await hash.make(documentoNormalizado)
       usuario.debeCambiarContrasena = false
       await usuario.save()
 
       // Recargar usuario desde BD (importante para verificación)
       const usuarioRecargado = await Usuario.findOrFail(usuario.id)
-      
+
       console.log('🔍 Hash guardado:', usuarioRecargado.contrasenaHash)
       console.log('🔍 Verificando con:', JSON.stringify(documentoNormalizado))
-      
+
       // Verificar que el hash funciona
       const verificacion = await hash.verify(usuarioRecargado.contrasenaHash, documentoNormalizado)
-      
+
       console.log('✅ Resultado verificación:', verificacion)
 
       return response.json({
@@ -142,7 +143,7 @@ export default class MovilController {
   async debugAcudiente({ request, response }: HttpContext) {
     try {
       const documento = String(request.input('documento') ?? '').trim()
-      
+
       if (!documento) {
         return response.json({
           success: false,
@@ -160,7 +161,7 @@ export default class MovilController {
         .first()
 
       // También buscar con documento original (por si acaso)
-      const acudienteOriginal = await Acudiente.query()  
+      const acudienteOriginal = await Acudiente.query()
         .where('numero_documento', documento)
         .preload('usuario')
         .first()
@@ -185,7 +186,7 @@ export default class MovilController {
           acudienteConOriginal: acudienteOriginal ? {
             id: acudienteOriginal.id,
             numeroDocumento: acudienteOriginal.numeroDocumento,
-            nombres: acudienteOriginal.nombres 
+            nombres: acudienteOriginal.nombres
           } : null
         }
       })
@@ -266,7 +267,7 @@ export default class MovilController {
 
       // Si no tiene hash, es primera vez - usar documento como password
       let isPasswordValid = false
-      
+
       if (!usuario.contrasenaHash || usuario.contrasenaHash.trim() === '') {
         // Primera vez - hashear el documento
         const passwordNormalizado = normalize(password)
@@ -282,7 +283,7 @@ export default class MovilController {
         // Verificar contraseña existente  
         isPasswordValid = await hash.verify(usuario.contrasenaHash, password)
         console.log('🔍 Verificación hash existente:', isPasswordValid)
-        
+
         // Si falla, intentar con documento (por si cambió la lógica)
         if (!isPasswordValid) {
           const passwordNormalizado = normalize(password)
@@ -493,11 +494,11 @@ export default class MovilController {
       if (!contacto) {
         return response.status(400).json({
           success: false,
-          message: 'El contacto (telÃ©fono o email) es requerido',
+          message: 'El contacto (teléfono o email) es requerido',
         })
       }
 
-      // Buscar por telÃ©fono o correo
+      // Buscar por teléfono o correo
       const acudiente = await Acudiente.query()
         .where('telefono', contacto)
         .orWhere('correo', contacto)
@@ -510,19 +511,26 @@ export default class MovilController {
         })
       }
 
-      // Generar cÃ³digo OTP de 6 dÃ­gitos
+      // Generar código OTP de 6 dígitos
       const codigo = Math.floor(100000 + Math.random() * 900000).toString()
       const expiraEn = 900 // 15 minutos en segundos
 
-      // TODO: En producciÃ³n, guardar OTP en tabla otp_codes o cache Redis
-      // Por ahora solo se genera y se simula el envÃ­o
+      // Invalidar OTPs anteriores del mismo contacto
+      await db.from('otp_codes').where('contacto', contacto).where('usado', false).update({ usado: true })
 
-      // Determinar mÃ©todo (SMS o email)
+      // Guardar OTP en BD
+      await db.table('otp_codes').insert({
+        contacto,
+        codigo,
+        intentos: 0,
+        usado: false,
+        expira_en: DateTime.now().plus({ seconds: expiraEn }).toSQL(),
+        creado_en: DateTime.now().toSQL(),
+      })
+
+      // Determinar método y enviar
       const metodo = contacto.includes('@') ? 'email' : 'sms'
-
-      // TODO: Integrar con servicio SMS/Email real
-      // Por ahora solo simulamos el envÃ­o
-      console.log(`[OTP] CÃ³digo ${codigo} enviado a ${contacto} vÃ­a ${metodo}`)
+      await OtpService.enviarCodigo(contacto, codigo)
 
       return response.status(200).json({
         success: true,
@@ -553,18 +561,53 @@ export default class MovilController {
       if (!contacto || !codigo) {
         return response.status(400).json({
           success: false,
-          message: 'Contacto y cÃ³digo son requeridos',
+          message: 'Contacto y código son requeridos',
         })
       }
 
-      // TODO: Verificar cÃ³digo contra BD/cache
-      // Por ahora aceptamos cualquier cÃ³digo de 6 dÃ­gitos en desarrollo
       if (codigo.length !== 6) {
         return response.status(400).json({
           success: false,
-          message: 'CÃ³digo invÃ¡lido',
+          message: 'Código inválido',
         })
       }
+
+      // Buscar OTP válido en BD
+      const otp = await db.from('otp_codes')
+        .where('contacto', contacto)
+        .where('usado', false)
+        .where('expira_en', '>', DateTime.now().toSQL())
+        .orderBy('creado_en', 'desc')
+        .first()
+
+      if (!otp) {
+        return response.status(400).json({
+          success: false,
+          message: 'Código expirado o no encontrado. Solicita uno nuevo.',
+        })
+      }
+
+      // Verificar intentos (máximo 5)
+      if (otp.intentos >= 5) {
+        await db.from('otp_codes').where('id', otp.id).update({ usado: true })
+        return response.status(400).json({
+          success: false,
+          message: 'Demasiados intentos. Solicita un código nuevo.',
+        })
+      }
+
+      // Verificar código
+      if (otp.codigo !== codigo) {
+        await db.from('otp_codes').where('id', otp.id).update({ intentos: otp.intentos + 1 })
+        return response.status(400).json({
+          success: false,
+          message: 'Código incorrecto',
+          intentosRestantes: 4 - otp.intentos,
+        })
+      }
+
+      // Código válido — marcar como usado
+      await db.from('otp_codes').where('id', otp.id).update({ usado: true })
 
       // Generar token temporal para el paso 3
       const jwtSecret = env.get('JWT_SECRET') || env.get('APP_KEY')
@@ -740,7 +783,7 @@ export default class MovilController {
       })
 
       // Estructura adaptada para app móvil: 1 estudiante = objeto, múltiples = array
-      const data = estudiantes.length === 1 
+      const data = estudiantes.length === 1
         ? { estudiante: estudiantes[0] }
         : { estudiantes }
 
@@ -1171,8 +1214,8 @@ export default class MovilController {
         })
       }
 
-      // Verificar que algÃºn estudiante estÃ¡ en el curso de la asignaciÃ³n
-      const estudianteEnCurso = acudiente.estudiantes.find(
+      // Verificar que algún estudiante está en el curso de la asignación
+      let estudianteEnCurso = acudiente.estudiantes.find(
         (e) => e.cursoId === asignacion.cursoId
       )
 
@@ -1184,20 +1227,21 @@ export default class MovilController {
           .select('curso_id')
 
         const cursosAsignacion = cursoIds.map((c: any) => c.curso_id)
-        const tieneAcceso = acudiente.estudiantes.some((e) =>
+        // Buscar el estudiante correcto que esté en uno de los cursos de la asignación
+        estudianteEnCurso = acudiente.estudiantes.find((e) =>
           cursosAsignacion.includes(e.cursoId)
         )
 
-        if (!tieneAcceso) {
+        if (!estudianteEnCurso) {
           return response.status(403).json({
             success: false,
-            message: 'No tienes acceso a esta asignaciÃ³n',
+            message: 'No tienes acceso a esta asignación',
           })
         }
       }
 
       // Obtener entrega del estudiante (si existe)
-      const estudianteId = estudianteEnCurso?.id || acudiente.estudiantes[0]?.id
+      const estudianteId = estudianteEnCurso.id
       let entrega = null
       let calificacion = null
 
@@ -1308,483 +1352,10 @@ export default class MovilController {
     }
   }
 
-  /**
-   * HU-31: Enviar evidencia de tarea
-   * POST /asignaciones/:id/entregas
-   * Soporta: archivos multipart, URLs, y texto
-   */
-  async enviarEntrega(ctx: HttpContext) {
-    const { params, request, response } = ctx
-    try {
-      const jwtUser = (ctx as any).jwtUser || (ctx as any).authUser || (ctx as any).user
-      if (!jwtUser) {
-        return response.status(401).json({
-          success: false,
-          message: 'No autenticado',
-        })
-      }
 
-      const asignacionId = params.id
-      const estudianteId = request.input('estudianteId') || request.input('estudiante_id')
-      const descripcion = request.input('descripcion') || request.input('evidenciaTexto') || request.input('evidencia_texto')
-      const archivosUrl = request.input('archivos') || request.input('archivosUrl') || request.input('archivos_url')
-      const nombreEnvio = request.input('nombreEnvio') || request.input('nombre_envio')
+  // NOTA: enviarEntrega y editarEntrega se encuentran en movil/entregasController.ts
+  // Las rutas apuntan a MovilEntregasController, no a este controlador.
 
-      // ========== VALIDACIÃ“N: estudianteId requerido ==========
-      if (!estudianteId) {
-        return response.status(400).json({
-          success: false,
-          errors: ['El estudianteId es requerido'],
-        })
-      }
-
-      // ========== VERIFICAR ACUDIENTE ==========
-      const acudiente = await Acudiente.query()
-        .where('usuario_id', jwtUser.id)
-        .preload('estudiantes')
-        .first()
-
-      if (!acudiente) {
-        return response.status(404).json({
-          success: false,
-          message: 'Acudiente no encontrado',
-        })
-      }
-
-      // ========== VERIFICAR VINCULACIÃ“N ACUDIENTE-ESTUDIANTE ==========
-      const esVinculado = acudiente.estudiantes.some((e) => e.id === Number(estudianteId))
-      if (!esVinculado) {
-        return response.status(403).json({
-          success: false,
-          message: 'Este estudiante no estÃ¡ vinculado a tu cuenta',
-        })
-      }
-
-      // ========== VERIFICAR QUE LA ASIGNACIÃ“N EXISTE ==========
-      const asignacion = await Asignacion.find(asignacionId)
-      if (!asignacion) {
-        return response.status(404).json({
-          success: false,
-          message: 'AsignaciÃ³n no encontrada',
-        })
-      }
-
-      // ========== VERIFICAR QUE LA ASIGNACIÃ“N CORRESPONDE AL CURSO DEL ESTUDIANTE ==========
-      const estudiante = await Estudiante.find(estudianteId)
-      if (!estudiante) {
-        return response.status(404).json({
-          success: false,
-          message: 'Estudiante no encontrado',
-        })
-      }
-
-      let asignacionCorrespondeAlCurso = false
-      if (asignacion.cursoId && asignacion.cursoId === estudiante.cursoId) {
-        asignacionCorrespondeAlCurso = true
-      } else {
-        // Verificar en tabla pivote asignacion_cursos (plural)
-        const match = await db
-          .from('asignacion_cursos')
-          .where('asignacion_id', asignacionId)
-          .where('curso_id', estudiante.cursoId)
-          .first()
-        asignacionCorrespondeAlCurso = Boolean(match)
-      }
-
-      if (!asignacionCorrespondeAlCurso) {
-        return response.status(403).json({
-          success: false,
-          message: 'La asignaciÃ³n no corresponde al curso del estudiante',
-        })
-      }
-
-      // ========== VERIFICAR FECHA LÃMITE ==========
-      if (asignacion.fechaVencimiento) {
-        const ahora = DateTime.now()
-        const fechaLimite = asignacion.fechaVencimiento
-
-        if (ahora > fechaLimite) {
-          // Calcular dÃ­as de retraso
-          const diasRetraso = Math.ceil(ahora.diff(fechaLimite, 'days').days)
-          
-          // Permitir entrega pero marcar como tardÃ­a (opcional: puedes bloquearla)
-          // Por ahora solo advertimos pero permitimos
-          console.log(`Entrega tardÃ­a: ${diasRetraso} dÃ­a(s) de retraso`)
-        }
-      }
-
-      // ========== VERIFICAR QUE NO ESTÃ‰ YA CALIFICADA ==========
-      const calificacionExistente = await Calificacion.query()
-        .where('asignacion_id', asignacionId)
-        .where('estudiante_id', estudianteId)
-        .first()
-
-      if (calificacionExistente) {
-        return response.status(403).json({
-          success: false,
-          message: 'Esta tarea ya estÃ¡ calificada, no puedes modificarla',
-        })
-      }
-
-      // ========== PROCESAR ARCHIVOS MULTIPART (UPLOAD REAL) ==========
-      const extensionesPermitidas = [
-        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt',
-        'jpg', 'jpeg', 'png', 'webp', 'gif',
-        'mp4', 'mov', 'mkv', 'avi',
-        'mp3', 'wav', 'm4a',
-      ]
-
-      // Intentar obtener archivos de mÃºltiples campos posibles
-      const archivosMultipart = request.files('archivos', {
-        size: '50mb',
-        extnames: extensionesPermitidas,
-      })
-
-      const archivoUnico = request.file('archivo', {
-        size: '50mb',
-        extnames: extensionesPermitidas,
-      })
-
-      const archivoMultipart = request.file('file', {
-        size: '50mb',
-        extnames: extensionesPermitidas,
-      })
-
-      const uploadedFiles = [
-        ...archivosMultipart,
-        ...(archivoUnico ? [archivoUnico] : []),
-        ...(archivoMultipart ? [archivoMultipart] : []),
-      ]
-
-      // ========== VALIDAR QUE HAY CONTENIDO ==========
-      if (!descripcion && !archivosUrl && uploadedFiles.length === 0) {
-        return response.status(400).json({
-          success: false,
-          errors: ['Debes agregar una descripciÃ³n o al menos un archivo'],
-        })
-      }
-
-      // ========== VERIFICAR SI YA EXISTE ENTREGA ==========
-      let entrega = await Entrega.query()
-        .where('asignacion_id', asignacionId)
-        .where('estudiante_id', estudianteId)
-        .first()
-
-      // ========== PROCESAR URLs DE ARCHIVOS (si vienen como string/array) ==========
-      let archivosPayload: any[] = []
-      if (archivosUrl) {
-        if (typeof archivosUrl === 'string') {
-          try {
-            archivosPayload = JSON.parse(archivosUrl)
-          } catch {
-            archivosPayload = [archivosUrl]
-          }
-        } else if (Array.isArray(archivosUrl)) {
-          archivosPayload = archivosUrl
-        }
-      }
-
-      // ========== SUBIR ARCHIVOS MULTIPART AL SERVIDOR ==========
-      const uploadedPayload: Array<{
-        originalName: string
-        fileName: string
-        extname: string
-        size: number
-        mimeType: string
-        url: string
-      }> = []
-
-      if (uploadedFiles.length > 0) {
-        // Crear entrega primero para tener el ID
-        if (!entrega) {
-          entrega = await Entrega.create({
-            asignacionId: Number(asignacionId),
-            estudianteId: Number(estudianteId),
-            acudienteId: acudiente.id,
-            evidenciaTexto: descripcion || null,
-            archivosUrl: null,
-            fechaEntrega: DateTime.now(),
-            estado: 'enviada',
-            institucionId: asignacion.institucionId,
-            nombreEnvio: nombreEnvio || `${acudiente.nombres} ${acudiente.apellidos}`,
-          })
-        }
-
-        const relativeFolder = `uploads/entregas/${entrega.id}`
-        const absoluteFolder = app.makePath('public', relativeFolder)
-        await mkdir(absoluteFolder, { recursive: true })
-
-        for (let i = 0; i < uploadedFiles.length; i++) {
-          const file = uploadedFiles[i]
-
-          if (!file.isValid) {
-            return response.status(400).json({
-              success: false,
-              message: 'Uno o mÃ¡s archivos no son vÃ¡lidos',
-              errors: file.errors,
-            })
-          }
-
-          const safeClientName = String(file.clientName || 'archivo')
-            .replace(/[^a-zA-Z0-9._-]/g, '_')
-            .slice(0, 80)
-
-          const name = `${Date.now()}_${i}_${safeClientName}`
-          await file.move(absoluteFolder, { name })
-
-          const url = `/${relativeFolder}/${name}`
-          uploadedPayload.push({
-            originalName: file.clientName,
-            fileName: name,
-            extname: file.extname || '',
-            size: file.size,
-            mimeType: file.type ? `${file.type}/${file.subtype || ''}`.replace(/\/$/, '') : '',
-            url,
-          })
-        }
-      }
-
-      // ========== COMBINAR ARCHIVOS ==========
-      const combined = [...archivosPayload, ...uploadedPayload]
-      const archivosJson = combined.length > 0 ? JSON.stringify(combined) : null
-
-      // ========== CREAR O ACTUALIZAR ENTREGA ==========
-      if (entrega) {
-        // Actualizar entrega existente
-        if (descripcion) entrega.evidenciaTexto = descripcion
-        if (archivosJson) {
-          // Combinar archivos existentes con nuevos (parseo seguro)
-          const existentes = (() => {
-            const raw: any = (entrega as any).archivosUrl
-            if (!raw) return []
-            if (Array.isArray(raw)) return raw
-            if (typeof raw === 'object') return raw
-            if (typeof raw === 'string') {
-              const s = raw.trim()
-              if (!s || s === '[object Object]') return []
-              if (s.startsWith('[') || s.startsWith('{')) {
-                try { return JSON.parse(s) } catch { return [] }
-              }
-              return []
-            }
-            return []
-          })()
-          const todos = [...existentes, ...combined]
-          entrega.archivosUrl = JSON.stringify(todos)
-        }
-        entrega.fechaEntrega = DateTime.now()
-        if (nombreEnvio) entrega.nombreEnvio = nombreEnvio
-        await entrega.save()
-      } else {
-        // Crear nueva entrega
-        entrega = await Entrega.create({
-          asignacionId: Number(asignacionId),
-          estudianteId: Number(estudianteId),
-          acudienteId: acudiente.id,
-          evidenciaTexto: descripcion || null,
-          archivosUrl: archivosJson,
-          fechaEntrega: DateTime.now(),
-          estado: 'enviada',
-          institucionId: asignacion.institucionId,
-          nombreEnvio: nombreEnvio || `${acudiente.nombres} ${acudiente.apellidos}`,
-        })
-      }
-
-      // ========== NOTIFICAR AL DOCENTE ==========
-      if (asignacion.docenteId) {
-        const docente = await db.from('docentes').where('id', asignacion.docenteId).first()
-        if (docente) {
-          await Notificacion.create({
-            destinatarioId: docente.usuario_id,
-            tipo: 'entrega',
-            asunto: 'Nueva evidencia recibida',
-            mensaje: `Se recibiÃ³ evidencia para: ${asignacion.titulo}`,
-            estado: 'pendiente',
-            enviadoEn: DateTime.now(),
-            asignacionId: asignacion.id,
-            institucionId: asignacion.institucionId,
-          })
-        }
-      }
-
-      // ========== DETERMINAR ESTADO ==========
-      let estadoEntrega = 'entregada'
-      if (asignacion.fechaVencimiento && DateTime.now() > asignacion.fechaVencimiento) {
-        estadoEntrega = 'entregada_tardia'
-      }
-
-      return response.status(201).json({
-        success: true,
-        message: 'Evidencia enviada correctamente',
-        data: {
-          id: entrega.id,
-          descripcion: entrega.evidenciaTexto,
-          fechaEntrega: entrega.fechaEntrega?.toISO(),
-          archivos: (() => {
-            const raw: any = (entrega as any).archivosUrl
-            if (!raw) return []
-            if (Array.isArray(raw)) return raw
-            if (typeof raw === 'object') return raw
-            if (typeof raw === 'string') {
-              const s = raw.trim()
-              if (!s || s === '[object Object]') return []
-              if (s.startsWith('[') || s.startsWith('{')) {
-                try { return JSON.parse(s) } catch { return [] }
-              }
-              return []
-            }
-            return []
-          })(),
-          estado: estadoEntrega,
-          nombreEnvio: entrega.nombreEnvio,
-        },
-      })
-    } catch (error) {
-      console.error('Error al enviar entrega:', error)
-      return response.status(500).json({
-        success: false,
-        message: 'Error al procesar la solicitud',
-      })
-    }
-  }
-
-  /**
-   * HU-33: Editar entrega antes de la fecha lÃ­mite
-   * PUT /entregas/:id
-   */
-  async editarEntrega({ params, request, response, jwtUser }: HttpContext) {
-    try {
-      if (!jwtUser) {
-        return response.status(401).json({
-          success: false,
-          message: 'No autenticado',
-        })
-      }
-
-      const entregaId = params.id
-      const descripcion = request.input('descripcion') || request.input('evidenciaTexto')
-      const archivosNuevos = request.input('archivosNuevos')
-      const archivosEliminar = request.input('archivosEliminar') || []
-
-      const entrega = await Entrega.query()
-        .where('id', entregaId)
-        .preload('asignacion')
-        .first()
-
-      if (!entrega) {
-        return response.status(404).json({
-          success: false,
-          message: 'Entrega no encontrada',
-        })
-      }
-
-      // Verificar que pertenece a un estudiante del acudiente
-      const acudiente = await Acudiente.query()
-        .where('usuario_id', jwtUser.id)
-        .preload('estudiantes')
-        .first()
-
-      if (!acudiente) {
-        return response.status(404).json({
-          success: false,
-          message: 'Acudiente no encontrado',
-        })
-      }
-
-      const esVinculado = acudiente.estudiantes.some((e) => e.id === entrega.estudianteId)
-      if (!esVinculado) {
-        return response.status(403).json({
-          success: false,
-          message: 'No tienes permiso para editar esta entrega',
-        })
-      }
-
-      // Verificar que no estÃ© calificada
-      const calificacion = await Calificacion.query()
-        .where('entrega_id', entregaId)
-        .first()
-
-      if (calificacion) {
-        return response.status(403).json({
-          success: false,
-          message: 'No puedes editar una entrega calificada',
-        })
-      }
-
-      // Verificar que no estÃ© vencida
-      if (entrega.asignacion?.fechaVencimiento) {
-        const fechaVenc = DateTime.fromJSDate(
-          new Date(entrega.asignacion.fechaVencimiento.toString())
-        )
-        if (fechaVenc < DateTime.now()) {
-          return response.status(403).json({
-            success: false,
-            message: 'No puedes editar una entrega vencida',
-          })
-        }
-      }
-
-      // Actualizar descripciÃ³n
-      if (descripcion !== undefined) {
-        entrega.evidenciaTexto = descripcion
-      }
-
-      // Manejar archivos (parseo seguro de archivosUrl)
-      let archivosActuales = (() => {
-        const raw: any = (entrega as any).archivosUrl
-        if (!raw) return []
-        if (Array.isArray(raw)) return raw
-        if (typeof raw === 'object') return raw
-        if (typeof raw === 'string') {
-          const s = raw.trim()
-          if (!s || s === '[object Object]') return []
-          if (s.startsWith('[') || s.startsWith('{')) {
-            try { return JSON.parse(s) } catch { return [] }
-          }
-          return []
-        }
-        return []
-      })()
-
-      // Eliminar archivos marcados
-      if (archivosEliminar.length > 0) {
-        archivosActuales = archivosActuales.filter(
-          (_: any, index: number) => !archivosEliminar.includes(index)
-        )
-      }
-
-      // Agregar nuevos archivos
-      if (archivosNuevos) {
-        archivosActuales = [...archivosActuales, ...archivosNuevos]
-      }
-
-      entrega.archivosUrl = JSON.stringify(archivosActuales)
-      entrega.actualizadoEn = DateTime.now()
-      await entrega.save()
-
-      return response.status(200).json({
-        success: true,
-        message: 'Entrega actualizada correctamente',
-        data: {
-          id: entrega.id,
-          descripcion: entrega.evidenciaTexto,
-          fechaEntrega: entrega.fechaEntrega?.toISO(),
-          fechaModificacion: entrega.actualizadoEn?.toISO(),
-          archivos: archivosActuales,
-        },
-      })
-    } catch (error) {
-      console.error('Error al editar entrega:', error)
-      return response.status(500).json({
-        success: false,
-        message: 'Error al procesar la solicitud',
-      })
-    }
-  }
-
-  // ============================================================
-  // EP-09: CALIFICACIONES Y RETROALIMENTACIÃ“N
-  // ============================================================
 
   /**
    * HU-36: Historial de entregas por perÃ­odo
@@ -1856,12 +1427,25 @@ export default class MovilController {
         },
         fechaEntrega: e.fechaEntrega?.toISO(),
         estado: e.calificacion ? 'calificada' : 'entregada',
-        miniatura: e.archivosUrl ? JSON.parse(e.archivosUrl)[0] : null,
+        miniatura: (() => {
+          const raw: any = e.archivosUrl
+          if (!raw) return null
+          if (Array.isArray(raw)) return raw[0] || null
+          if (typeof raw === 'string') {
+            const s = raw.trim()
+            if (!s || s === '[object Object]') return null
+            if (s.startsWith('[') || s.startsWith('{')) {
+              try { return JSON.parse(s)[0] || null } catch { return null }
+            }
+            return null
+          }
+          return null
+        })(),
         calificacion: e.calificacion
           ? {
-              nota: e.calificacion.nota,
-              escala: e.calificacion.escala,
-            }
+            nota: e.calificacion.nota,
+            escala: e.calificacion.escala,
+          }
           : null,
       }))
 
@@ -1873,6 +1457,11 @@ export default class MovilController {
         .where((q) => {
           if (estudiante?.cursoId) {
             q.where('curso_id', estudiante.cursoId)
+              .orWhereIn('id',
+                db.from('asignacion_cursos')
+                  .where('curso_id', estudiante.cursoId)
+                  .select('asignacion_id')
+              )
           }
         })
         .count('* as total')
@@ -1886,11 +1475,11 @@ export default class MovilController {
       const promedio =
         calificaciones.length > 0
           ? parseFloat(
-              (
-                calificaciones.reduce((sum, e) => sum + (e.calificacion?.nota || 0), 0) /
-                calificaciones.length
-              ).toFixed(1)
-            )
+            (
+              calificaciones.reduce((sum, e) => sum + (e.calificacion?.nota || 0), 0) /
+              calificaciones.length
+            ).toFixed(1)
+          )
           : 0
 
       let escala = 'Sin datos'
@@ -1940,7 +1529,7 @@ export default class MovilController {
         })
       }
 
-      const estudianteId = params.id
+      const rawEstudianteId = params.id
       const periodoId = request.input('periodo')
 
       // Verificar vinculaciÃ³n
@@ -1953,7 +1542,20 @@ export default class MovilController {
         return response.status(404).json({ success: false, message: 'Acudiente no encontrado' })
       }
 
-      const esVinculado = acudiente.estudiantes.some((e) => e.id === Number(estudianteId))
+      // Resolver estudianteId: soportar alias 'me'
+      let estudianteId: number | null = null
+      if (rawEstudianteId === 'me') {
+        estudianteId = acudiente.estudiantes[0]?.id || null
+      } else {
+        const parsed = Number(rawEstudianteId)
+        estudianteId = Number.isFinite(parsed) ? parsed : null
+      }
+
+      if (!estudianteId) {
+        return response.status(400).json({ success: false, message: 'ID de estudiante inválido' })
+      }
+
+      const esVinculado = acudiente.estudiantes.some((e) => e.id === estudianteId)
       if (!esVinculado) {
         return response.status(403).json({
           success: false,
@@ -1991,12 +1593,17 @@ export default class MovilController {
         })
       }
 
-      // Total de tareas del perÃ­odo para el curso
+      // Total de tareas del período para el curso (incluyendo multi-curso via pivot)
       const totalAsignaciones = await db
         .from('asignaciones')
         .where('periodo_id', periodo.id)
         .where((q) => {
           q.where('curso_id', estudiante.cursoId)
+            .orWhereIn('id',
+              db.from('asignacion_cursos')
+                .where('curso_id', estudiante.cursoId)
+                .select('asignacion_id')
+            )
         })
         .count('* as total')
 
@@ -2012,17 +1619,24 @@ export default class MovilController {
 
       const tareasCompletadas = entregas.length
 
-      // Tareas vencidas sin entregar
+      // Tareas vencidas sin entregar (incluyendo multi-curso)
       const now = DateTime.now()
+      const entregaIds = entregas.map((e) => e.asignacionId)
       const asignacionesVencidas = await db
         .from('asignaciones')
         .where('periodo_id', periodo.id)
-        .where('curso_id', estudiante.cursoId)
+        .where((q) => {
+          q.where('curso_id', estudiante.cursoId)
+            .orWhereIn('id',
+              db.from('asignacion_cursos')
+                .where('curso_id', estudiante.cursoId)
+                .select('asignacion_id')
+            )
+        })
         .where('fecha_vencimiento', '<', now.toSQL())
-        .whereNotIn(
-          'id',
-          entregas.map((e) => e.asignacionId)
-        )
+        .if(entregaIds.length > 0, (query) => {
+          query.whereNotIn('id', entregaIds)
+        })
         .count('* as total')
 
       const tareasVencidas = Number(asignacionesVencidas[0]?.total || 0)
@@ -2056,10 +1670,28 @@ export default class MovilController {
         bajo: notas.filter((n) => n < 3.0).length,
       }
 
+      // Usar calificaciones ya consultadas para contar calificadas
+      const tareasCalificadasCount = calificaciones.length
+
+      const estadisticas = {
+        pendientes: Math.max(0, tareasPendientes),
+        vencidas: tareasVencidas,
+        completadas: tareasCompletadas,
+        entregadas: tareasCompletadas - tareasCalificadasCount,
+        calificadas: tareasCalificadasCount,
+      }
+      const totalPorAtender = estadisticas.pendientes + estadisticas.vencidas
+
       return response.status(200).json({
         success: true,
         data: {
           periodo: { id: periodo.id, nombre: periodo.nombre },
+          estudianteId: estudiante.id,
+          estadisticas,
+          total: {
+            porAtender: totalPorAtender,
+            completadas: tareasCompletadas,
+          },
           totalTareas,
           tareasCompletadas,
           tareasPendientes: Math.max(0, tareasPendientes),
@@ -2093,17 +1725,17 @@ export default class MovilController {
     try {
       const { request, response } = ctx
       const jwtUser = (ctx as any).jwtUser || (ctx as any).authUser || (ctx as any).user
-      
+
       if (!jwtUser) {
         return response.status(401).json({
           success: false,
           message: 'No autenticado',
         })
       }
-      
+
       const payload = request.only([
         'fcmToken',
-        'dispositivo', 
+        'dispositivo',
         'sistemaOperativo',
         'versionApp'
       ])
@@ -2136,7 +1768,7 @@ export default class MovilController {
       })
     } catch (error) {
       console.error('Error al registrar token FCM:', error)
-      return response.status(500).json({
+      return ctx.response.status(500).json({
         success: false,
         message: 'Error al registrar token FCM',
         error: error.message
@@ -2159,9 +1791,9 @@ export default class MovilController {
           message: 'No autenticado',
         })
       }
-      
+
       const { page = 1, limit = 20, tipo, leida } = request.qs()
-      
+
       let query = db.from('notificaciones_push')
         .where('usuario_id', jwtUser.id)
         .orderBy('creada_en', 'desc')
@@ -2170,7 +1802,7 @@ export default class MovilController {
       if (tipo) {
         query = query.where('tipo', tipo)
       }
-      
+
       if (leida !== undefined) {
         query = query.where('leida', leida === 'true')
       }
@@ -2178,7 +1810,7 @@ export default class MovilController {
       // PaginaciÃ³n
       const offset = (Number(page) - 1) * Number(limit)
       const notificaciones = await query.limit(Number(limit)).offset(offset)
-      
+
       // Contar total
       const totalCount = await db.from('notificaciones_push')
         .where('usuario_id', jwtUser.id)
@@ -2199,9 +1831,9 @@ export default class MovilController {
         data: notificaciones.map((n) => ({
           id: n.id,
           tipo: n.tipo,
-          titulo: n.asunto || this.getTituloNotificacion(n.tipo),
-          mensaje: n.mensaje,
-          datos: n.metadatos,
+          titulo: n.titulo || this.getTituloNotificacion(n.tipo),
+          mensaje: n.cuerpo,
+          datos: n.datos ? (typeof n.datos === 'string' ? JSON.parse(n.datos) : n.datos) : null,
           leida: n.leida,
           leidaEn: n.leida_en,
           creadaEn: n.creada_en,
@@ -2249,7 +1881,7 @@ export default class MovilController {
           message: 'No autenticado',
         })
       }
-      
+
       const notificacionId = params.id
 
       // Verificar que la notificaciÃ³n exista y pertenezca al usuario
@@ -2349,8 +1981,69 @@ export default class MovilController {
       console.error('Error al marcar todas las notificaciones como leÃ­das:', error)
       return response.status(500).json({
         success: false,
-        message: 'Error al marcar notificaciones como leÃ­das',
+        message: 'Error al marcar notificaciones como leídas',
         error: error.message
+      })
+    }
+  }
+
+  /**
+   * Eliminar una notificación
+   * DELETE /api/movil/notificaciones/:id
+   */
+  async eliminarNotificacion({ params, response, jwtUser }: HttpContext) {
+    try {
+      if (!jwtUser) {
+        return response.status(401).json({ success: false, message: 'No autenticado' })
+      }
+
+      const notificacion = await db.from('notificaciones_push')
+        .where('id', params.id)
+        .where('usuario_id', jwtUser.id)
+        .first()
+
+      if (!notificacion) {
+        return response.status(404).json({ success: false, message: 'Notificación no encontrada' })
+      }
+
+      await db.from('notificaciones_push').where('id', params.id).delete()
+
+      return response.json({ success: true, message: 'Notificación eliminada' })
+    } catch (error) {
+      console.error('Error al eliminar notificación:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al eliminar notificación',
+        error: error.message,
+      })
+    }
+  }
+
+  /**
+   * Eliminar todas las notificaciones del usuario
+   * DELETE /api/movil/notificaciones
+   */
+  async eliminarTodasNotificaciones({ response, jwtUser }: HttpContext) {
+    try {
+      if (!jwtUser) {
+        return response.status(401).json({ success: false, message: 'No autenticado' })
+      }
+
+      const count = await db.from('notificaciones_push')
+        .where('usuario_id', jwtUser.id)
+        .delete()
+
+      return response.json({
+        success: true,
+        message: `${count} notificaciones eliminadas`,
+        data: { eliminadas: count },
+      })
+    } catch (error) {
+      console.error('Error al eliminar notificaciones:', error)
+      return response.status(500).json({
+        success: false,
+        message: 'Error al eliminar notificaciones',
+        error: error.message,
       })
     }
   }
@@ -2369,32 +2062,42 @@ export default class MovilController {
           message: 'No autenticado',
         })
       }
-      // Obtener preferencias del usuario (usar tabla de configuraciÃ³n si existe)
-      const preferencias = {
-        notificaciones: {
-          nuevasTareas: true,
-          calificaciones: true,
-          recordatorios: true,
-          eventos: true,
-          general: true
-        },
-        dispositivos: await db.from('dispositivos_moviles')
-          .where('usuario_id', jwtUser.id)
-          .where('activo', true)
-          .select('dispositivo', 'sistema_operativo', 'version_app', 'actualizado_en')
+
+      // Buscar preferencias en BD
+      let prefs = await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).first()
+
+      // Si no existen, crear con defaults
+      if (!prefs) {
+        await db.table('preferencias_usuario').insert({
+          usuario_id: jwtUser.id,
+          notif_nuevas_tareas: true,
+          notif_calificaciones: true,
+          notif_recordatorios: true,
+          notif_eventos: true,
+          notif_general: true,
+          actualizado_en: DateTime.now().toSQL(),
+        })
+        prefs = await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).first()
       }
-      // Por ahora retornamos valores por defecto
-      // TODO: Crear tabla preferencias_usuario si se requiere persistencia
+
       return response.status(200).json({
         success: true,
-        data: preferencias
+        data: {
+          notificaciones: {
+            nuevasTareas: prefs.notif_nuevas_tareas,
+            calificaciones: prefs.notif_calificaciones,
+            recordatorios: prefs.notif_recordatorios,
+            eventos: prefs.notif_eventos,
+            general: prefs.notif_general,
+          },
+        },
       })
     } catch (error) {
       console.error('Error al obtener preferencias:', error)
       return response.status(500).json({
         success: false,
         message: 'Error al procesar la solicitud',
-        error: error.message
+        error: error.message,
       })
     }
   }
@@ -2414,22 +2117,54 @@ export default class MovilController {
           message: 'No autenticado',
         })
       }
-      const preferencias = request.input('notificaciones')
-      // ValidaciÃ³n bÃ¡sica
-      if (!preferencias || typeof preferencias !== 'object') {
+
+      const input = request.input('notificaciones')
+      if (!input || typeof input !== 'object') {
         return response.status(400).json({
           success: false,
-          message: 'Se requiere el objeto de preferencias'
+          message: 'Se requiere el objeto de preferencias',
         })
       }
-      // AquÃ­ se guardarÃ­an las preferencias en una tabla de configuraciÃ³n
-      // Por ahora, solo simulamos la actualizaciÃ³n
-      console.log(`Preferencias actualizadas para usuario ${jwtUser.id}:`, preferencias)
-      // TODO: Guardar en BD cuando se implemente tabla preferencias_usuario
+
+      // Construir objeto de update solo con campos válidos
+      const updateData: Record<string, any> = { actualizado_en: DateTime.now().toSQL() }
+      if (typeof input.nuevasTareas === 'boolean') updateData.notif_nuevas_tareas = input.nuevasTareas
+      if (typeof input.calificaciones === 'boolean') updateData.notif_calificaciones = input.calificaciones
+      if (typeof input.recordatorios === 'boolean') updateData.notif_recordatorios = input.recordatorios
+      if (typeof input.eventos === 'boolean') updateData.notif_eventos = input.eventos
+      if (typeof input.general === 'boolean') updateData.notif_general = input.general
+
+      // Upsert: actualizar si existe, crear si no
+      const existe = await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).first()
+      if (existe) {
+        await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).update(updateData)
+      } else {
+        await db.table('preferencias_usuario').insert({
+          usuario_id: jwtUser.id,
+          notif_nuevas_tareas: input.nuevasTareas ?? true,
+          notif_calificaciones: input.calificaciones ?? true,
+          notif_recordatorios: input.recordatorios ?? true,
+          notif_eventos: input.eventos ?? true,
+          notif_general: input.general ?? true,
+          actualizado_en: DateTime.now().toSQL(),
+        })
+      }
+
+      // Retornar preferencias actualizadas
+      const prefs = await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).first()
+
       return response.status(200).json({
         success: true,
         message: 'Preferencias actualizadas exitosamente',
-        data: preferencias
+        data: {
+          notificaciones: {
+            nuevasTareas: prefs.notif_nuevas_tareas,
+            calificaciones: prefs.notif_calificaciones,
+            recordatorios: prefs.notif_recordatorios,
+            eventos: prefs.notif_eventos,
+            general: prefs.notif_general,
+          },
+        },
       })
     } catch (error) {
       console.error('Error al actualizar preferencias:', error)

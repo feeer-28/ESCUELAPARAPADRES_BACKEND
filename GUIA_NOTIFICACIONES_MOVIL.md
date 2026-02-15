@@ -415,6 +415,693 @@ class NotificationProvider with ChangeNotifier {
 
 ---
 
+## 🤖 **IMPLEMENTACIÓN EN ANDROID NATIVO (JAVA)**
+
+### **Paso 1: Configuración Firebase**
+
+#### **app/build.gradle**
+```gradle
+android {
+    compileSdkVersion 34
+    
+    defaultConfig {
+        minSdkVersion 21
+        targetSdkVersion 34
+    }
+}
+
+dependencies {
+    implementation 'com.google.firebase:firebase-messaging:23.1.2'
+    implementation 'com.google.firebase:firebase-analytics:21.2.0'
+    implementation 'androidx.work:work-runtime:2.8.1'
+    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
+    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
+    implementation 'androidx.recyclerview:recyclerview:1.3.0'
+    implementation 'com.google.android.material:material:1.9.0'
+}
+```
+
+#### **AndroidManifest.xml**
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+<uses-permission android:name="android.permission.VIBRATE" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+<application
+    android:name=".CatedraFamiliaApplication"
+    android:allowBackup="true"
+    android:icon="@mipmap/ic_launcher"
+    android:label="@string/app_name"
+    android:theme="@style/AppTheme">
+    
+    <!-- Firebase Messaging Service -->
+    <service
+        android:name=".services.MyFirebaseMessagingService"
+        android:exported="false">
+        <intent-filter>
+            <action android:name="com.google.firebase.MESSAGING_EVENT" />
+        </intent-filter>
+    </service>
+    
+    <!-- Notification Click Handler -->
+    <receiver
+        android:name=".receivers.NotificationClickReceiver"
+        android:exported="false">
+        <intent-filter>
+            <action android:name="com.catedrafamilia.NOTIFICATION_CLICK" />
+        </intent-filter>
+    </receiver>
+    
+    <activity android:name=".MainActivity"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+    </activity>
+    
+    <activity android:name=".NotificationsActivity" />
+    <activity android:name=".TaskDetailActivity" />
+</application>
+```
+
+### **Paso 2: Servicio Firebase Messaging**
+
+#### **services/MyFirebaseMessagingService.java**
+```java
+package com.catedrafamilia.services;
+
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.os.Build;
+import android.util.Log;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+import com.google.firebase.messaging.FirebaseMessagingService;
+import com.google.firebase.messaging.RemoteMessage;
+import com.catedrafamilia.R;
+import com.catedrafamilia.MainActivity;
+import com.catedrafamilia.utils.NotificationCounter;
+import com.catedrafamilia.receivers.NotificationClickReceiver;
+
+public class MyFirebaseMessagingService extends FirebaseMessagingService {
+    private static final String TAG = "FCMService";
+    private static final String CHANNEL_ID = "catedra_familia_channel";
+    private static final String CHANNEL_NAME = "Cátedra Familia";
+    private static final String CHANNEL_DESCRIPTION = "Notificaciones de tareas y eventos";
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        createNotificationChannel();
+    }
+
+    @Override
+    public void onNewToken(String token) {
+        Log.d(TAG, "Nuevo FCM token: " + token);
+        
+        // Guardar token localmente
+        getSharedPreferences("fcm_prefs", MODE_PRIVATE)
+            .edit()
+            .putString("fcm_token", token)
+            .apply();
+        
+        // Registrar en backend si usuario está logueado
+        String authToken = getSharedPreferences("auth_prefs", MODE_PRIVATE)
+            .getString("auth_token", null);
+        
+        if (authToken != null) {
+            NotificationApiService.registerToken(this, token, authToken);
+        }
+    }
+
+    @Override
+    public void onMessageReceived(RemoteMessage remoteMessage) {
+        Log.d(TAG, "Mensaje FCM recibido de: " + remoteMessage.getFrom());
+
+        // Incrementar contador de notificaciones no leídas
+        NotificationCounter.increment(this);
+
+        // Extraer datos
+        String title = "Nueva notificación";
+        String body = "";
+        
+        if (remoteMessage.getNotification() != null) {
+            title = remoteMessage.getNotification().getTitle();
+            body = remoteMessage.getNotification().getBody();
+        }
+
+        String tipo = remoteMessage.getData().get("tipo");
+        String targetId = remoteMessage.getData().get("target_id");
+        String estudianteId = remoteMessage.getData().get("estudiante_id");
+
+        // Mostrar notificación
+        showNotification(title, body, tipo, targetId, estudianteId);
+    }
+
+    private void showNotification(String title, String body, String tipo, String targetId, String estudianteId) {
+        // Intent para manejar click en notificación
+        Intent intent = new Intent(this, NotificationClickReceiver.class);
+        intent.putExtra("tipo", tipo);
+        intent.putExtra("target_id", targetId);
+        intent.putExtra("estudiante_id", estudianteId);
+        
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+            this, 
+            0, 
+            intent, 
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        // Construir notificación
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setVibrate(new long[]{0, 250, 250, 250})
+            .setShowWhen(true);
+
+        // Mostrar notificación
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
+        int notificationId = (int) System.currentTimeMillis();
+        notificationManager.notify(notificationId, builder.build());
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID,
+                CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            );
+            channel.setDescription(CHANNEL_DESCRIPTION);
+            channel.enableVibration(true);
+            channel.setVibrationPattern(new long[]{0, 250, 250, 250});
+
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            notificationManager.createNotificationChannel(channel);
+        }
+    }
+}
+```
+
+### **Paso 3: Servicio API de Notificaciones**
+
+#### **services/NotificationApiService.java**
+```java
+package com.catedrafamilia.services;
+
+import android.content.Context;
+import android.os.Build;
+import android.util.Log;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+import retrofit2.Retrofit;
+import retrofit2.converter.gson.GsonConverterFactory;
+import retrofit2.http.*;
+import com.catedrafamilia.models.FCMRegistrationRequest;
+import com.catedrafamilia.models.ApiResponse;
+
+public class NotificationApiService {
+    private static final String BASE_URL = "https://escuelaparapadres-backend-1.onrender.com";
+    private static final String TAG = "NotificationAPI";
+    private static Retrofit retrofit;
+    private static ApiInterface apiInterface;
+
+    public interface ApiInterface {
+        @POST("/api/movil/notificaciones/token")
+        Call<ApiResponse> registerFCMToken(
+            @Header("Authorization") String authorization,
+            @Body FCMRegistrationRequest request
+        );
+
+        @GET("/api/movil/notificaciones")
+        Call<ApiResponse> getNotifications(
+            @Header("Authorization") String authorization,
+            @Query("page") int page,
+            @Query("limit") int limit,
+            @Query("leida") Boolean leida
+        );
+
+        @PUT("/api/movil/notificaciones/{id}/leer")
+        Call<ApiResponse> markAsRead(
+            @Header("Authorization") String authorization,
+            @Path("id") int notificationId
+        );
+
+        @PUT("/api/movil/notificaciones/leer-todas")
+        Call<ApiResponse> markAllAsRead(
+            @Header("Authorization") String authorization
+        );
+    }
+
+    private static void initRetrofit() {
+        if (retrofit == null) {
+            retrofit = new Retrofit.Builder()
+                .baseUrl(BASE_URL)
+                .addConverterFactory(GsonConverterFactory.create())
+                .build();
+            apiInterface = retrofit.create(ApiInterface.class);
+        }
+    }
+
+    public static void registerToken(Context context, String fcmToken, String authToken) {
+        initRetrofit();
+
+        FCMRegistrationRequest request = new FCMRegistrationRequest();
+        request.fcmToken = fcmToken;
+        request.dispositivo = Build.MODEL;
+        request.sistemaOperativo = "android";
+        request.versionApp = getVersionName(context);
+
+        Call<ApiResponse> call = apiInterface.registerFCMToken("Bearer " + authToken, request);
+        call.enqueue(new Callback<ApiResponse>() {
+            @Override
+            public void onResponse(Call<ApiResponse> call, Response<ApiResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    Log.d(TAG, "Token FCM registrado exitosamente");
+                } else {
+                    Log.e(TAG, "Error registrando token FCM: " + response.code());
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse> call, Throwable t) {
+                Log.e(TAG, "Fallo al registrar token FCM", t);
+            }
+        });
+    }
+
+    public static void getNotifications(String authToken, boolean onlyUnread, 
+                                      NotificationCallback callback) {
+        initRetrofit();
+
+        Boolean leida = onlyUnread ? false : null;
+        Call<ApiResponse> call = apiInterface.getNotifications("Bearer " + authToken, 1, 50, leida);
+        
+        call.enqueue(new Callback<ApiResponse>() {
+            @Override
+            public void onResponse(Call<ApiResponse> call, Response<ApiResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    callback.onSuccess(response.body());
+                } else {
+                    callback.onError("Error: " + response.code());
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse> call, Throwable t) {
+                callback.onError(t.getMessage());
+            }
+        });
+    }
+
+    private static String getVersionName(Context context) {
+        try {
+            return context.getPackageManager()
+                .getPackageInfo(context.getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "1.0.0";
+        }
+    }
+
+    public interface NotificationCallback {
+        void onSuccess(ApiResponse response);
+        void onError(String error);
+    }
+}
+```
+
+### **Paso 4: Contador de Notificaciones**
+
+#### **utils/NotificationCounter.java**
+```java
+package com.catedrafamilia.utils;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+public class NotificationCounter {
+    private static final String PREFS_NAME = "notification_counter";
+    private static final String KEY_UNREAD_COUNT = "unread_count";
+    private static final String KEY_LAST_SYNC = "last_sync";
+
+    public static int getUnreadCount(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return prefs.getInt(KEY_UNREAD_COUNT, 0);
+    }
+
+    public static void setUnreadCount(Context context, int count) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit()
+            .putInt(KEY_UNREAD_COUNT, count)
+            .putLong(KEY_LAST_SYNC, System.currentTimeMillis())
+            .apply();
+        
+        // Notificar cambio a listeners
+        NotificationCounterListener.notifyCountChange(count);
+    }
+
+    public static void increment(Context context) {
+        int current = getUnreadCount(context);
+        setUnreadCount(context, current + 1);
+    }
+
+    public static void decrement(Context context) {
+        int current = getUnreadCount(context);
+        if (current > 0) {
+            setUnreadCount(context, current - 1);
+        }
+    }
+
+    public static void clearCount(Context context) {
+        setUnreadCount(context, 0);
+    }
+
+    public static void syncWithBackend(Context context, String authToken) {
+        NotificationApiService.getNotifications(authToken, true, new NotificationApiService.NotificationCallback() {
+            @Override
+            public void onSuccess(ApiResponse response) {
+                // Contar notificaciones no leídas de la respuesta
+                int unreadCount = 0; // Procesar response.data para contar
+                setUnreadCount(context, unreadCount);
+            }
+
+            @Override
+            public void onError(String error) {
+                // Manejar error de sincronización
+            }
+        });
+    }
+}
+```
+
+### **Paso 5: Receptor de Clicks de Notificación**
+
+#### **receivers/NotificationClickReceiver.java**
+```java
+package com.catedrafamilia.receivers;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import com.catedrafamilia.MainActivity;
+import com.catedrafamilia.TaskDetailActivity;
+import com.catedrafamilia.utils.NotificationCounter;
+
+public class NotificationClickReceiver extends BroadcastReceiver {
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        String tipo = intent.getStringExtra("tipo");
+        String targetId = intent.getStringExtra("target_id");
+        String estudianteId = intent.getStringExtra("estudiante_id");
+
+        // Decrementar contador
+        NotificationCounter.decrement(context);
+
+        // Crear intent de navegación
+        Intent mainIntent = new Intent(context, MainActivity.class);
+        mainIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+        switch (tipo) {
+            case "tarea":
+                Intent taskIntent = new Intent(context, TaskDetailActivity.class);
+                taskIntent.putExtra("task_id", targetId);
+                taskIntent.putExtra("estudiante_id", estudianteId);
+                taskIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(taskIntent);
+                break;
+                
+            case "calificacion":
+                mainIntent.putExtra("navigate_to", "grades");
+                mainIntent.putExtra("estudiante_id", estudianteId);
+                context.startActivity(mainIntent);
+                break;
+                
+            case "evento":
+                mainIntent.putExtra("navigate_to", "events");
+                context.startActivity(mainIntent);
+                break;
+                
+            default:
+                context.startActivity(mainIntent);
+                break;
+        }
+    }
+}
+```
+
+### **Paso 6: Modelos de Datos**
+
+#### **models/FCMRegistrationRequest.java**
+```java
+package com.catedrafamilia.models;
+
+public class FCMRegistrationRequest {
+    public String fcmToken;
+    public String dispositivo;
+    public String sistemaOperativo;
+    public String versionApp;
+}
+```
+
+#### **models/ApiResponse.java**
+```java
+package com.catedrafamilia.models;
+
+import java.util.List;
+import java.util.Map;
+
+public class ApiResponse {
+    public boolean success;
+    public String message;
+    public List<Map<String, Object>> data;
+}
+```
+
+### **Paso 7: Badge de Contador para Toolbar**
+
+#### **views/NotificationBadgeView.java**
+```java
+package com.catedrafamilia.views;
+
+import android.content.Context;
+import android.graphics.Color;
+import android.util.AttributeSet;
+import android.view.Gravity;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.TextView;
+import androidx.core.content.ContextCompat;
+import com.catedrafamilia.R;
+
+public class NotificationBadgeView extends FrameLayout {
+    private TextView badgeText;
+    private int count = 0;
+
+    public NotificationBadgeView(Context context) {
+        super(context);
+        init();
+    }
+
+    public NotificationBadgeView(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        init();
+    }
+
+    private void init() {
+        // Crear TextView para el badge
+        badgeText = new TextView(getContext());
+        badgeText.setTextColor(Color.WHITE);
+        badgeText.setTextSize(12);
+        badgeText.setGravity(Gravity.CENTER);
+        badgeText.setBackground(ContextCompat.getDrawable(getContext(), R.drawable.badge_background));
+        
+        // Configurar layout params
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        params.gravity = Gravity.TOP | Gravity.END;
+        params.setMargins(0, -8, -8, 0);
+        
+        badgeText.setLayoutParams(params);
+        badgeText.setMinWidth(dpToPx(20));
+        badgeText.setMinHeight(dpToPx(20));
+        
+        addView(badgeText);
+        updateBadgeVisibility();
+    }
+
+    public void setCount(int count) {
+        this.count = count;
+        updateBadgeVisibility();
+    }
+
+    private void updateBadgeVisibility() {
+        if (count > 0) {
+            badgeText.setVisibility(VISIBLE);
+            badgeText.setText(count > 99 ? "99+" : String.valueOf(count));
+        } else {
+            badgeText.setVisibility(GONE);
+        }
+    }
+
+    private int dpToPx(int dp) {
+        return (int) (dp * getContext().getResources().getDisplayMetrics().density);
+    }
+}
+```
+
+### **Paso 8: Actividad de Notificaciones**
+
+#### **NotificationsActivity.java**
+```java
+package com.catedrafamilia;
+
+import android.os.Bundle;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+import com.catedrafamilia.adapters.NotificationsAdapter;
+import com.catedrafamilia.services.NotificationApiService;
+import com.catedrafamilia.utils.NotificationCounter;
+import java.util.ArrayList;
+
+public class NotificationsActivity extends AppCompatActivity {
+    private RecyclerView recyclerView;
+    private NotificationsAdapter adapter;
+    private SwipeRefreshLayout swipeRefresh;
+    private ProgressBar progressBar;
+    private TextView emptyView;
+    private String authToken;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_notifications);
+
+        // Configurar action bar
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setTitle("Notificaciones");
+        }
+
+        // Obtener token de autenticación
+        authToken = getSharedPreferences("auth_prefs", MODE_PRIVATE)
+            .getString("auth_token", null);
+
+        // Inicializar vistas
+        initViews();
+        
+        // Cargar notificaciones
+        loadNotifications();
+    }
+
+    private void initViews() {
+        recyclerView = findViewById(R.id.recyclerView);
+        swipeRefresh = findViewById(R.id.swipeRefresh);
+        progressBar = findViewById(R.id.progressBar);
+        emptyView = findViewById(R.id.emptyView);
+
+        // Configurar RecyclerView
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        adapter = new NotificationsAdapter(new ArrayList<>(), this::onNotificationClick);
+        recyclerView.setAdapter(adapter);
+
+        // Configurar SwipeRefresh
+        swipeRefresh.setOnRefreshListener(this::loadNotifications);
+    }
+
+    private void loadNotifications() {
+        if (authToken == null) return;
+
+        showLoading(true);
+        NotificationApiService.getNotifications(authToken, false, new NotificationApiService.NotificationCallback() {
+            @Override
+            public void onSuccess(ApiResponse response) {
+                runOnUiThread(() -> {
+                    showLoading(false);
+                    if (response.data != null && !response.data.isEmpty()) {
+                        adapter.updateNotifications(response.data);
+                        showEmptyView(false);
+                    } else {
+                        showEmptyView(true);
+                    }
+                    swipeRefresh.setRefreshing(false);
+                });
+            }
+
+            @Override
+            public void onError(String error) {
+                runOnUiThread(() -> {
+                    showLoading(false);
+                    swipeRefresh.setRefreshing(false);
+                    // Mostrar error
+                });
+            }
+        });
+    }
+
+    private void onNotificationClick(Map<String, Object> notification) {
+        // Marcar como leída si no lo está
+        Boolean leida = (Boolean) notification.get("leida");
+        if (leida != null && !leida) {
+            // Marca como leída en backend y decrementar contador local
+            NotificationCounter.decrement(this);
+        }
+
+        // Navegar según el tipo
+        String tipo = (String) notification.get("tipo");
+        String targetId = String.valueOf(notification.get("target_id"));
+        
+        // Implementar navegación según el tipo
+        switch (tipo) {
+            case "tarea":
+                startTaskDetailActivity(targetId);
+                break;
+            case "calificacion":
+                startGradesActivity();
+                break;
+        }
+    }
+
+    private void showLoading(boolean show) {
+        progressBar.setVisibility(show ? View.VISIBLE : View.GONE);
+        recyclerView.setVisibility(show ? View.GONE : View.VISIBLE);
+    }
+
+    private void showEmptyView(boolean show) {
+        emptyView.setVisibility(show ? View.VISIBLE : View.GONE);
+        recyclerView.setVisibility(show ? View.GONE : View.VISIBLE);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == android.R.id.home) {
+            onBackPressed();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+}
+```
+
+---
+
 ## 🎨 **WIDGETS DE UI**
 
 ### **Badge de Contador**
