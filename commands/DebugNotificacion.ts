@@ -30,6 +30,15 @@ export default class DebugNotificacion extends BaseCommand {
                 colsSchema.forEach((c: any) => this.logger.info(`   - ${c.column_name} (${c.data_type}) [Null: ${c.is_nullable}]`))
             }
 
+            // Verificar schema de notificaciones_push
+            this.logger.info('🔍 Inspeccionando columnas de notificaciones_push...')
+            const colsNotif = await db.raw("SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = 'notificaciones_push'") as any
+
+            if (colsNotif.rows) {
+                this.logger.info('📋 Columnas encontradas (notificaciones_push):')
+                colsNotif.rows.forEach((c: any) => this.logger.info(`   - ${c.column_name} (${c.data_type}) [Null: ${c.is_nullable}]`))
+            }
+
             // 1. Buscar al docente
             const emailDocente = 'mariaz@colegio.edu'
             const usuarioDocente = await Usuario.findBy('correo', emailDocente)

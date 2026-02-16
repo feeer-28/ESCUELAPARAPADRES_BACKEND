@@ -1769,18 +1769,34 @@ export default class MovilController {
       let plataforma = payload.sistemaOperativo || 'Android'
       if (plataforma.length > 20) plataforma = plataforma.substring(0, 20)
 
-      await (db.from('dispositivos_moviles') as any).updateOrInsert(
-        {
+      // Verificar si ya existe el token
+      const existe = await db.from('dispositivos_moviles')
+        .where('token_fcm', payload.fcmToken)
+        .first()
+
+      if (existe) {
+        // Actualizar
+        await db.from('dispositivos_moviles')
+          .where('token_fcm', payload.fcmToken)
+          .update({
+            usuario_id: jwtUser.id,
+            plataforma: plataforma,
+            version_app: payload.versionApp || '1.0.0',
+            activo: true,
+            actualizado_en: DateTime.now().toSQL()
+          })
+      } else {
+        // Insertar
+        await db.table('dispositivos_moviles').insert({
           token_fcm: payload.fcmToken,
-          usuario_id: jwtUser.id
-        },
-        {
+          usuario_id: jwtUser.id,
           plataforma: plataforma,
           version_app: payload.versionApp || '1.0.0',
           activo: true,
+          creado_en: DateTime.now().toSQL(),
           actualizado_en: DateTime.now().toSQL()
-        }
-      )
+        })
+      }
 
       console.log(`[FCM] Token ${payload.fcmToken} registrado exitosamente en dispositivos_moviles (Plataforma: ${plataforma})`)
 
