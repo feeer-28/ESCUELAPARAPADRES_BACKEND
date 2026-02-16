@@ -1755,16 +1755,34 @@ export default class MovilController {
 
       console.log(`[FCM] Registrando token para usuario ${jwtUser.id}`)
 
-      // Actualizar usuario con token FCM 
+      // Actualizar usuario con token FCM (Backup/Legacy)
       const usuario = await Usuario.find(jwtUser.id)
       if (usuario) {
         usuario.tokenFcm = payload.fcmToken
         await usuario.save()
-        console.log(`[FCM] Token actualizado en usuario ${usuario.id}`)
       }
 
-      // TODO: Registro completo en dispositivos_moviles cuando se corrija la tabla
-      console.log(`[FCM] Token ${payload.fcmToken} registrado exitosamente`)
+      // Registrar en tabla dispositivos_moviles (Principal)
+      // Usamos updateOrInsert para mantener actualizado el token
+      // NOTA: Schema verificado: Requiere 'plataforma' (NOT NULL). 'modelo_dispositivo' no existe o falla.
+
+      let plataforma = payload.sistemaOperativo || 'Android'
+      if (plataforma.length > 20) plataforma = plataforma.substring(0, 20)
+
+      await (db.from('dispositivos_moviles') as any).updateOrInsert(
+        {
+          token_fcm: payload.fcmToken,
+          usuario_id: jwtUser.id
+        },
+        {
+          plataforma: plataforma,
+          version_app: payload.versionApp || '1.0.0',
+          activo: true,
+          actualizado_en: DateTime.now().toSQL()
+        }
+      )
+
+      console.log(`[FCM] Token ${payload.fcmToken} registrado exitosamente en dispositivos_moviles (Plataforma: ${plataforma})`)
 
       return response.status(201).json({
         success: true,
@@ -1780,7 +1798,6 @@ export default class MovilController {
       })
     }
   }
-
   /**
    * HU-38: Listar notificaciones
    * GET /notificaciones
