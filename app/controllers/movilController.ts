@@ -1051,6 +1051,7 @@ export default class MovilController {
             periodo: null,
             total: 0,
             pendientes: 0,
+            vencidas: 0,
             entregadas: 0,
             calificadas: 0,
           },
@@ -1077,6 +1078,7 @@ export default class MovilController {
             periodo: { id: periodo.id, nombre: periodo.nombre },
             total: 0,
             pendientes: 0,
+            vencidas: 0,
             entregadas: 0,
             calificadas: 0,
             ultimaSincronizacion: DateTime.now().toISO(),
@@ -1104,6 +1106,7 @@ export default class MovilController {
 
       const now = DateTime.now()
       let pendientes = 0
+      let vencidas = 0
       let entregadas = 0
       let calificadasCount = 0
 
@@ -1121,6 +1124,7 @@ export default class MovilController {
           entregadas++
         } else if (asig.fechaVencimiento && DateTime.fromJSDate(new Date(asig.fechaVencimiento.toString())) < now) {
           estado = 'vencida'
+          vencidas++
         } else {
           estado = 'pendiente'
           pendientes++
@@ -1155,6 +1159,7 @@ export default class MovilController {
           periodo: { id: periodo.id, nombre: periodo.nombre },
           total: asignaciones.length,
           pendientes,
+          vencidas,
           entregadas,
           calificadas: calificadasCount,
           ultimaSincronizacion: DateTime.now().toISO(),
