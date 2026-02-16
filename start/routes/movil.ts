@@ -297,6 +297,7 @@ router
 router.group(() => {
   router.get('/acudientes/mis-estudiantes', [MovilController, 'misEstudiantes'])
   router.get('/estudiantes', [MovilController, 'misEstudiantes'])
+  router.get('/estudiantes/:id/historial', [MovilController, 'historialEstudiante'])
 }).prefix('/api')
   .use(async (ctx, next) => {
     const { default: jwt } = await import('jsonwebtoken')

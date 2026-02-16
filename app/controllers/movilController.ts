@@ -1742,7 +1742,8 @@ export default class MovilController {
         'fcmToken',
         'dispositivo',
         'sistemaOperativo',
-        'versionApp'
+        'versionApp',
+        'plataforma' // ✅ Nuevo campo
       ])
 
       // Validación simple
@@ -1766,7 +1767,7 @@ export default class MovilController {
       // Usamos updateOrInsert para mantener actualizado el token
       // NOTA: Schema verificado: Requiere 'plataforma' (NOT NULL). 'modelo_dispositivo' no existe o falla.
 
-      let plataforma = payload.sistemaOperativo || 'Android'
+      let plataforma = payload.plataforma || payload.sistemaOperativo || 'Android'
       if (plataforma.length > 20) plataforma = plataforma.substring(0, 20)
 
       // Verificar si ya existe el token
