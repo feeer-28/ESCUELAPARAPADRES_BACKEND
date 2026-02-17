@@ -36,13 +36,21 @@ function initializeFirebase() {
 
     if (serviceAccountKey) {
       try {
+        console.log('🔍 SERVICE_ACCOUNT_KEY encontrado, longitud:', serviceAccountKey.length)
+        console.log('🔍 Primeros 100 caracteres:', serviceAccountKey.substring(0, 100))
+        console.log('🔍 Últimos 50 caracteres:', serviceAccountKey.substring(serviceAccountKey.length - 50))
+        
         const serviceAccount = JSON.parse(serviceAccountKey)
+        console.log('✅ JSON parseado correctamente, project_id:', serviceAccount.project_id)
+        
         firebaseApp = admin.initializeApp({
           credential: admin.credential.cert(serviceAccount as any),
         })
-        console.log('✅ Firebase inicializado correctamente')
+        console.log('🎉 Firebase inicializado correctamente')
         return firebaseApp
       } catch (e) {
+        console.error('❌ Error detallado al parsear JSON:', e.message)
+        console.error('❌ Tipo de error:', e.name)
         console.warn('⚠️ SERVICE_ACCOUNT_KEY inválido. Verifica que sea JSON válido.')
       }
     }
