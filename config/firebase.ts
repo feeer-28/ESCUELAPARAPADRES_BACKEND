@@ -45,6 +45,12 @@ function initializeFirebase() {
         const serviceAccount = JSON.parse(serviceAccountKey)
         console.log('✅ JSON parseado correctamente, project_id:', serviceAccount.project_id)
         
+        // Corregir los saltos de línea en la private key
+        if (serviceAccount.private_key) {
+          serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n')
+          console.log('🔧 Private key corregida, longitud:', serviceAccount.private_key.length)
+        }
+        
         firebaseApp = admin.initializeApp({
           credential: admin.credential.cert(serviceAccount as any),
         })
