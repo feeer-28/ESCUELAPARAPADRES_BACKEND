@@ -1694,8 +1694,10 @@ export default class MovilController {
         'fcmToken',
         'dispositivo',
         'sistemaOperativo',
-        'versionApp'
+        'versionApp',
+        'plataforma' // ✅ Nuevo campo
       ])
+      console.log('[DEBUG] registrarTokenFCM Payload:', JSON.stringify(payload))
 
       // Validación simple
       if (!payload.fcmToken) {
@@ -1707,15 +1709,44 @@ export default class MovilController {
 
       console.log(`[FCM] Registrando token para usuario ${jwtUser.id}`)
 
-      // Actualizar usuario con token FCM 
+      // Actualizar usuario con token FCM (Backup)
       const usuario = await Usuario.find(jwtUser.id)
       if (usuario) {
         usuario.tokenFcm = payload.fcmToken
         await usuario.save()
-        console.log(`[FCM] Token actualizado en usuario ${usuario.id}`)
       }
 
-      // TODO: Registro completo en dispositivos_moviles cuando se corrija la tabla
+      // Registrar en dispositivos_moviles
+      let plataforma = payload.plataforma || payload.sistemaOperativo || 'Android'
+      if (plataforma.length > 20) plataforma = plataforma.substring(0, 20)
+      console.log('[DEBUG] Plataforma procesada:', plataforma)
+
+      const existe = await db.from('dispositivos_moviles')
+        .where('token_fcm', payload.fcmToken)
+        .first()
+
+      if (existe) {
+        await db.from('dispositivos_moviles')
+          .where('token_fcm', payload.fcmToken)
+          .update({
+            usuario_id: jwtUser.id,
+            plataforma,
+            version_app: payload.versionApp || '1.0.0',
+            activo: true,
+            actualizado_en: DateTime.now().toSQL()
+          })
+      } else {
+        await db.table('dispositivos_moviles').insert({
+          token_fcm: payload.fcmToken,
+          usuario_id: jwtUser.id,
+          plataforma,
+          version_app: payload.versionApp || '1.0.0',
+          activo: true,
+          creado_en: DateTime.now().toSQL(),
+          actualizado_en: DateTime.now().toSQL()
+        })
+      }
+
       console.log(`[FCM] Token ${payload.fcmToken} registrado exitosamente`)
 
       return response.status(201).json({
@@ -1725,11 +1756,7 @@ export default class MovilController {
       })
     } catch (error) {
       console.error('Error al registrar token FCM:', error)
-      return ctx.response.status(500).json({
-        success: false,
-        message: 'Error al registrar token FCM',
-        error: error.message
-      })
+      return ctx.response.status(500).json({ success: false, message: 'Error al registrar token FCM', error: error.message })
     }
   }
 
@@ -2089,6 +2116,7 @@ export default class MovilController {
 
       const messaging = getMessaging()
       if (messaging) {
+        console.log(`[DEBUG] Intentando enviar push a ${dispositivos.length} dispositivos. Datos:`, JSON.stringify(datos))
         const tokens = dispositivos.map(d => d.token_fcm)
         const message = {
           notification: { title: titulo, body: cuerpo },
@@ -2107,6 +2135,54 @@ export default class MovilController {
       }
     } catch (error) {
       console.error('Error en enviarNotificacionPush:', error)
+    }
+  }
+
+  /**
+   * GET /debug/fix-schema
+   * Emergencia: Corregir schema de notificaciones sin acceso a consola
+   */
+  async fixSchema({ response }: HttpContext) {
+    try {
+      const tableName = 'notificaciones_push'
+      const schema = db.connection().schema
+      const hasTable = await schema.hasTable(tableName)
+
+      if (!hasTable) {
+        return response.json({ message: 'La tabla notificaciones_push no existe' })
+      }
+
+      const hasMensaje = await schema.hasColumn(tableName, 'mensaje')
+      const hasCuerpo = await schema.hasColumn(tableName, 'cuerpo')
+      const hasDatos = await schema.hasColumn(tableName, 'datos')
+
+      const log: string[] = []
+
+      await schema.alterTable(tableName, (table) => {
+        // Rename mensaje -> cuerpo
+        if (hasMensaje && !hasCuerpo) {
+          table.renameColumn('mensaje', 'cuerpo')
+          log.push('Columna mensaje renombrada a cuerpo')
+        }
+
+        // Add datos if missing
+        if (!hasDatos) {
+          table.text('datos').nullable()
+          log.push('Columna datos agregada')
+        }
+      })
+
+      return response.json({
+        success: true,
+        message: 'Verificación de schema completada',
+        acciones: log,
+        estadoActual: {
+          hasCuerpo: await schema.hasColumn(tableName, 'cuerpo'),
+          hasDatos: await schema.hasColumn(tableName, 'datos')
+        }
+      })
+    } catch (error) {
+      return response.status(500).json({ error: error.message, stack: error.stack })
     }
   }
 }
