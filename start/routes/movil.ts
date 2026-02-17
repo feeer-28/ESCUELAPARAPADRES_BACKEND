@@ -294,6 +294,7 @@ router
      * Emergencia: Corregir DB sin acceso a consola
      */
     router.get('/debug/fix-schema', [MovilController, 'fixSchema'])
+    router.get('/debug/fix-schema-sql', [MovilController, 'fixSchemaSQL'])
   })
   .prefix('/api/movil')
 

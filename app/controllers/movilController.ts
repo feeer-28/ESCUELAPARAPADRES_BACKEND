@@ -2185,4 +2185,32 @@ export default class MovilController {
       return response.status(500).json({ error: error.message, stack: error.stack })
     }
   }
+  /**
+   * GET /debug/fix-schema-sql
+   * Fuerza la correcciÃ³n con RAW SQL (Alternativa)
+   */
+  async fixSchemaSQL({ response }: HttpContext) {
+    try {
+      const logs: string[] = []
+
+      try {
+        await db.raw('ALTER TABLE notificaciones_push ADD COLUMN IF NOT EXISTS cuerpo TEXT;')
+        logs.push('ALTER TABLE ... ADD COLUMN cuerpo (OK)')
+      } catch (e: any) { logs.push('Error cuerpo: ' + e.message) }
+
+      try {
+        await db.raw('ALTER TABLE notificaciones_push ADD COLUMN IF NOT EXISTS datos TEXT;')
+        logs.push('ALTER TABLE ... ADD COLUMN datos (OK)')
+      } catch (e: any) { logs.push('Error datos: ' + e.message) }
+
+      try {
+        await db.raw('UPDATE notificaciones_push SET cuerpo = mensaje WHERE cuerpo IS NULL AND mensaje IS NOT NULL;')
+        logs.push('UPDATE ... SET cuerpo=mensaje (OK)')
+      } catch (e) { logs.push('UPDATE omitido (quizas mensaje no existe)') }
+
+      return response.json({ success: true, message: 'Fix SQL ejecutado', logs })
+    } catch (error) {
+      return response.status(500).json({ error: error.message, stack: error.stack })
+    }
+  }
 }
