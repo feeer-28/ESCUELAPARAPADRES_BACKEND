@@ -2125,10 +2125,10 @@ export default class MovilController {
         }
 
         try {
-          const result = await (messaging as any).sendMulticast(message)
-          console.log(`NotificaciÃ³n enviada: ${result.successCount}/${tokens.length} exitosos`)
+          const result = await (messaging as any).sendEachForMulticast(message)
+          console.log(`Notificación enviada: ${result.successCount}/${tokens.length} exitosos`)
         } catch (error) {
-          console.error('Error al enviar notificaciÃ³n push:', error)
+          console.error('Error al enviar notificación push:', error)
         }
       } else {
         console.warn('Firebase Messaging no disponible')
