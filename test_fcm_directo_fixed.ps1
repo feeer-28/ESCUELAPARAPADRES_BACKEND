@@ -1,9 +1,9 @@
-# Test directo del token FCM
+# Test directo del token FCM  
 $BASE_URL = "https://escuelaparapadres-backend-1.onrender.com"
 
 Write-Host "=== TEST DIRECTO FCM TOKEN ===" -ForegroundColor Green
 
-# Datos de login corregidos - DOCUMENTO REAL
+# Datos de login corregidos - DOCUMENTO
 $loginData = @{
     documento = "1234567890"
     password = "1234567890"
@@ -12,15 +12,15 @@ $loginData = @{
 Write-Host "Haciendo login..." -ForegroundColor Cyan
 
 try {
-    $response = Invoke-WebRequest -Uri "$BASE_URL/api/movil/auth/login/movil" -Method POST -ContentType "application/json" -Body $loginData -UseBasicParsing
+    $response = Invoke-WebRequest -Uri "$BASE_URL/api/movil/auth/login/movil" -Method POST -ContentType "application/json" -Body $loginData
     $loginResult = $response.Content | ConvertFrom-Json
     
     if ($loginResult.success) {
         Write-Host "LOGIN EXITOSO" -ForegroundColor Green
         
-        # Headers con token - ESTRUCTURA CORREGIDA
+        # Headers con token
         $headers = @{
-            "Authorization" = "Bearer $($loginResult.token)"
+            "Authorization" = "Bearer $($loginResult.data.token)"
             "Content-Type" = "application/json"
         }
 
@@ -35,7 +35,7 @@ try {
         Write-Host "Registrando token FCM..." -ForegroundColor Cyan
         
         try {
-            $fcmResponse = Invoke-WebRequest -Uri "$BASE_URL/api/movil/notificaciones/token" -Method POST -Headers $headers -Body $fcmData -UseBasicParsing
+            $fcmResponse = Invoke-WebRequest -Uri "$BASE_URL/api/movil/notificaciones/token" -Method POST -Headers $headers -Body $fcmData
             $fcmResult = $fcmResponse.Content | ConvertFrom-Json
             Write-Host "TOKEN FCM REGISTRADO EXITOSAMENTE!" -ForegroundColor Green
             Write-Host "Respuesta: $($fcmResult.message)" -ForegroundColor White

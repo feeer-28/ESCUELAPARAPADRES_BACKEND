@@ -1,6 +1,7 @@
 import env from '#start/env'
-
 import * as admin from 'firebase-admin'
+import path from 'path'
+import fs from 'fs'
 
 
 
@@ -56,9 +57,6 @@ function initializeFirebase() {
         console.log(`🔍 Intentando cargar Firebase desde ruta: ${serviceAccountPath}`)
         
         // Resolver ruta absoluta para mayor compatibilidad  
-        const path = require('path')
-        const fs = require('fs')
-        
         let resolvedPath = serviceAccountPath
         if (!path.isAbsolute(serviceAccountPath)) {
           resolvedPath = path.resolve(process.cwd(), serviceAccountPath)
