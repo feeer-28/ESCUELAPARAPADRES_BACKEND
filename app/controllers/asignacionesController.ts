@@ -14,6 +14,7 @@ import Categoria from '#models/categoria'
 import Curso from '#models/curso'
 
 import Docente from '#models/docente'
+import Funcionario from '#models/funcionario'
 
 import Estudiante from '#models/estudiante'
 
@@ -144,19 +145,15 @@ export default class AsignacionesController {
     }
 
     const faltantes = ids.filter((curso) => !docentePorCurso.has(curso))
-    if (faltantes.length) {
-      return response.badRequest({
-        message: 'No hay docente asignado a uno o más cursos. Debes asignar un docente al curso.',
-        cursosSinDocente: faltantes,
-      })
-    }
 
     const cursosPorDocente = new Map<number, number[]>()
     for (const curso of ids) {
-      const docenteId = docentePorCurso.get(curso)!
-      const list = cursosPorDocente.get(docenteId) ?? []
-      list.push(curso)
-      cursosPorDocente.set(docenteId, list)
+      const docenteId = docentePorCurso.get(curso)
+      if (docenteId !== undefined) {
+        const list = cursosPorDocente.get(docenteId) ?? []
+        list.push(curso)
+        cursosPorDocente.set(docenteId, list)
+      }
     }
 
     const fechaInicio = fechaInicioRaw
@@ -176,6 +173,7 @@ export default class AsignacionesController {
     const incluirEnBoletin = Boolean(request.input('incluirEnBoletin') ?? request.input('incluir_en_boletin') ?? false)
 
     const asignacionesCreadas: Asignacion[] = []
+    // Crear asignaciones para cursos con docente asociado
     for (const [docenteId, cursosDelDocente] of cursosPorDocente.entries()) {
       const docente = await Docente.find(docenteId)
       if (!docente) {
@@ -204,6 +202,49 @@ export default class AsignacionesController {
 
       await this.enviarNotificacionesAsignacion(asignacion, cursosDelDocente)
       asignacionesCreadas.push(asignacion)
+    }
+
+    // Crear asignación para cursos sin docente usando un Docente placeholder del orientador (evitar NULL por restricción)
+    if (faltantes.length > 0) {
+      // Reutilizar/crear un Docente para el orientador actual
+      let docenteFallback = await Docente.query().where('usuario_id', usuario.id).first()
+      if (!docenteFallback) {
+        const func = await Funcionario.query().where('usuario_id', usuario.id).first()
+        const institucionIdInferida = func?.institucionId ?? (await Periodo.find(periodoId))!.institucionId
+        docenteFallback = await Docente.create({
+          nombres: func?.nombre ?? 'Orientador',
+          apellidos: func?.apellido ?? 'Del Sistema',
+          tipoDocumento: 'N/A',
+          numeroDocumento: `orientador-${usuario.id}`,
+          telefono: '0000000000',
+          correo: `orientador_${usuario.id}@placeholder.local`,
+          institucionId: institucionIdInferida!,
+          usuarioId: usuario.id,
+        })
+      }
+
+      const asignacionSinDocente = await Asignacion.create({
+        titulo: String(request.input('titulo') ?? bancoTarea.titulo),
+        descripcion: String(request.input('descripcion') ?? bancoTarea.descripcion),
+        frecuencia,
+        fechaInicio,
+        fechaVencimiento,
+        incluirEnBoletin,
+        cursoId: faltantes.length === 1 ? faltantes[0] : null,
+        docenteId: docenteFallback.id,
+        categoriaId,
+        bancoTareaId: bancoTarea.id,
+        periodoId: Number(periodoId),
+        institucionId: request.input('institucionId') ?? request.input('institucion_id') ?? periodo.institucionId,
+        tema: String(request.input('tema') ?? bancoTarea.tema ?? ''),
+      })
+
+      if (faltantes.length > 1) {
+        await asignacionSinDocente.related('cursos').attach(faltantes)
+      }
+
+      await this.enviarNotificacionesAsignacion(asignacionSinDocente, faltantes)
+      asignacionesCreadas.push(asignacionSinDocente)
     }
 
     if (asignacionesCreadas.length === 1) {

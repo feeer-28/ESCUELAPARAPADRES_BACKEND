@@ -1,4 +1,3 @@
-
 import type { HttpContext } from '@adonisjs/core/http'
 import app from '@adonisjs/core/services/app'
 import { mkdir } from 'node:fs/promises'
@@ -20,7 +19,6 @@ export default class TareasController {
     if (!tarea) {
       return response.notFound({ message: 'Tarea no encontrada' })
     }
-
     return response.ok(tarea)
   }
 
@@ -35,13 +33,10 @@ export default class TareasController {
       return response.notFound({ message: 'La tarea no tiene archivo asociado' })
     }
 
-    // Este endpoint solo sirve archivos locales guardados en /public/uploads/...
-    // Si el enlace es externo (http/https), no se puede descargar desde el servidor.
     if (/^https?:\/\//i.test(enlace)) {
       return response.badRequest({ message: 'El enlace de esta tarea es externo y no es un archivo del servidor' })
     }
 
-    // Validar que sea un path esperado y que corresponda al ID de la tarea
     const expectedPrefix = `/uploads/tareas/${tarea.id}/`
     if (!enlace.startsWith(expectedPrefix)) {
       return response.badRequest({ message: 'El archivo asociado no tiene una ruta válida' })
@@ -93,24 +88,71 @@ export default class TareasController {
       'mp3',
       'wav',
       'm4a',
-    ]
+    ] as const
 
     const archivoEnlace =
-      request.file('enlace', { size: '50mb', extnames: extensionesPermitidas }) ||
-      request.file('archivo', { size: '50mb', extnames: extensionesPermitidas }) ||
-      request.file('file', { size: '50mb', extnames: extensionesPermitidas })
+      request.file('enlace', { size: '50mb', extnames: [...extensionesPermitidas] }) ||
+      request.file('archivo', { size: '50mb', extnames: [...extensionesPermitidas] }) ||
+      request.file('file', { size: '50mb', extnames: [...extensionesPermitidas] })
+
+    console.log('DEBUG gradosObjetivo:', request.input('gradosObjetivo') ?? request.input('grados_objetivo'))
+    console.log('DEBUG criteriosAutomaticos:', request.input('criteriosAutomaticos') ?? request.input('criterios_automaticos'))
 
     const payload = {
-      titulo: request.input('titulo'),
-      descripcion: request.input('descripcion'),
+      titulo: request.input('titulo') as string,
+      descripcion: request.input('descripcion') as string,
       enlace: enlaceString ? String(enlaceString) : null,
-      categoriaId: request.input('categoriaId') ?? request.input('categoria_id'),
-      tema: request.input('tema'),
-      entregableEsperado: request.input('entregableEsperado') ?? request.input('entregable_esperado'),
-      gradosObjetivo: request.input('gradosObjetivo') ?? request.input('grados_objetivo'),
-      esMultiGrado: Boolean(request.input('esMultiGrado') ?? request.input('es_multi_grado') ?? false),
-      tipoCalificacion: request.input('tipoCalificacion') ?? request.input('tipo_calificacion') ?? 'cualitativa',
-      criteriosAutomaticos: request.input('criteriosAutomaticos') ?? request.input('criterios_automaticos'),
+      categoriaId: (request.input('categoriaId') ?? request.input('categoria_id')) as number,
+      tema: (request.input('tema') as string) ?? null,
+      entregableEsperado: (request.input('entregableEsperado') ?? request.input('entregable_esperado')) as string | null,
+      gradosObjetivo: (() => {
+        const raw = request.input('gradosObjetivo') ?? request.input('grados_objetivo')
+        if (raw === undefined || raw === null || raw === '') return null
+        if (Array.isArray(raw)) return JSON.stringify(raw)
+        const str = String(raw).trim()
+        if (str.startsWith('[')) {
+          try {
+            const v = JSON.parse(str)
+            return JSON.stringify(v)
+          } catch {
+            return null
+          }
+        }
+        if (str.startsWith('{') && str.endsWith('}')) {
+          const inner = str.slice(1, -1)
+          const pgParts = inner.split(',').map((s: string) => s.trim().replace(/^"|"$/g, ''))
+          const numsPg = pgParts.map((x: string) => Number(x)).filter((n: number) => !Number.isNaN(n))
+          const arr: Array<number | string> = numsPg.length ? numsPg : pgParts.filter((x: string) => x.length)
+          return JSON.stringify(arr)
+        }
+        const parts = str
+          .split(',')
+          .map((x: string) => x.trim().replace(/^"|"$/g, ''))
+          .filter((x: string) => x.length)
+        const nums = parts.map((x: string) => Number(x)).filter((n: number) => !Number.isNaN(n))
+        const arr: Array<number | string> = nums.length ? nums : parts
+        return JSON.stringify(arr)
+      })(),
+      esMultiGrado: (() => {
+        const v = request.input('esMultiGrado') ?? request.input('es_multi_grado')
+        if (typeof v === 'boolean') return v
+        if (v === undefined || v === null) return false
+        const sv = String(v).toLowerCase()
+        return sv === '1' || sv === 'true' || sv === 'yes' || sv === 'si'
+      })(),
+      tipoCalificacion: (request.input('tipoCalificacion') ?? request.input('tipo_calificacion') ?? 'cualitativa') as string,
+      criteriosAutomaticos: (() => {
+        const raw = request.input('criteriosAutomaticos') ?? request.input('criterios_automaticos')
+        if (raw === undefined || raw === null || raw === '') return null
+        if (typeof raw === 'object') return JSON.stringify(raw)
+        const str = String(raw).trim()
+        try {
+          const v = JSON.parse(str)
+          return JSON.stringify(v)
+        } catch {
+          return null
+        }
+      })(),
       vecesUtilizada: 0,
       creadoPor: usuario.id,
     }
@@ -152,3 +194,4 @@ export default class TareasController {
     return response.created(tarea)
   }
 }
+
