@@ -25,11 +25,7 @@ function initializeFirebase() {
 
 
   try {
-    // Verificar que la API de credenciales está disponible (compatibilidad de versión)
-    if (!admin || !admin.credential || typeof (admin.credential as any).cert !== 'function') {
-      console.warn('⚠️ Firebase Admin credential API no disponible. Omite inicialización.')
-      return null
-    }
+    console.log('🔄 Iniciando configuración de Firebase...')
 
     // Opción 1: Usar SERVICE_ACCOUNT_KEY como string JSON
 
@@ -53,22 +49,47 @@ function initializeFirebase() {
 
 
     // Opción 2: Usar SERVICE_ACCOUNT_PATH (archivo JSON)
-
     const serviceAccountPath = env.get('FIREBASE_SERVICE_ACCOUNT_PATH')
-
     
-
     if (serviceAccountPath) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const serviceAccount = require(serviceAccountPath)
-        firebaseApp = admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount as any),
-        })
-        console.log('✅ Firebase inicializado correctamente desde archivo')
-        return firebaseApp
+        console.log(`🔍 Intentando cargar Firebase desde ruta: ${serviceAccountPath}`)
+        
+        // Resolver ruta absoluta para mayor compatibilidad  
+        const path = require('path')
+        const fs = require('fs')
+        
+        let resolvedPath = serviceAccountPath
+        if (!path.isAbsolute(serviceAccountPath)) {
+          resolvedPath = path.resolve(process.cwd(), serviceAccountPath)
+        }
+        
+        console.log(`📂 Ruta resuelta: ${resolvedPath}`)
+        console.log(`📁 Directorio actual: ${process.cwd()}`)
+        
+        // Verificar que el archivo existe
+        if (fs.existsSync(resolvedPath)) {
+          console.log('✅ Archivo de credenciales encontrado')
+          const serviceAccount = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'))
+          firebaseApp = admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount as any),
+          })
+          console.log('🎉 Firebase inicializado correctamente desde archivo!')
+          return firebaseApp
+        } else {
+          console.warn(`❌ Archivo no encontrado en: ${resolvedPath}`)
+          
+          // Debug adicional: listar archivos en directorio
+          try {
+            const dirPath = path.dirname(resolvedPath)
+            const files = fs.readdirSync(dirPath)
+            console.log(`📋 Archivos disponibles en ${dirPath}:`, files.filter(f => f.includes('firebase')))
+          } catch (listError) {
+            console.warn('⚠️ No se pudo listar el directorio:', listError.message)
+          }
+        }
       } catch (e) {
-        console.warn('⚠️ No se pudo leer SERVICE_ACCOUNT_PATH. Verifica la ruta al archivo JSON.')
+        console.warn('⚠️ Error al leer SERVICE_ACCOUNT_PATH:', e.message)
       }
     }
 
