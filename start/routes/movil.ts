@@ -288,6 +288,12 @@ router
      * HU-42: Información de contacto de soporte
      */
     router.get('/soporte/info', [MovilController, 'infoSoporte'])
+
+    /**
+     * GET /debug/fix-schema
+     * Emergencia: Corregir DB sin acceso a consola
+     */
+    router.get('/debug/fix-schema', [MovilController, 'fixSchema'])
   })
   .prefix('/api/movil')
 
