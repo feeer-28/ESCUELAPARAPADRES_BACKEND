@@ -1,5 +1,5 @@
 import env from '#start/env'
-import * as admin from 'firebase-admin'
+import admin from 'firebase-admin'
 import path from 'path'
 import fs from 'fs'
 
@@ -39,6 +39,8 @@ function initializeFirebase() {
         console.log('🔍 SERVICE_ACCOUNT_KEY encontrado, longitud:', serviceAccountKey.length)
         console.log('🔍 Primeros 100 caracteres:', serviceAccountKey.substring(0, 100))
         console.log('🔍 Últimos 50 caracteres:', serviceAccountKey.substring(serviceAccountKey.length - 50))
+        console.log('🔍 Admin disponible:', typeof admin)
+        console.log('🔍 Admin credential disponible:', typeof admin.credential)
         
         const serviceAccount = JSON.parse(serviceAccountKey)
         console.log('✅ JSON parseado correctamente, project_id:', serviceAccount.project_id)
