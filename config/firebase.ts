@@ -28,8 +28,27 @@ function initializeFirebase() {
   try {
     console.log('🔄 Iniciando configuración de Firebase...')
 
-    // Opción 1: Usar SERVICE_ACCOUNT_KEY como string JSON
+    // Opción 1: Usar SERVICE_ACCOUNT_BASE64 (más confiable, sin problemas de escape)
+    const serviceAccountBase64 = env.get('FIREBASE_SERVICE_ACCOUNT_BASE64')
+    
+    if (serviceAccountBase64) {
+      try {
+        console.log('🔍 SERVICE_ACCOUNT_BASE64 encontrado')
+        const jsonString = Buffer.from(serviceAccountBase64, 'base64').toString('utf-8')
+        const serviceAccount = JSON.parse(jsonString)
+        console.log('✅ Base64 decodificado correctamente, project_id:', serviceAccount.project_id)
+        
+        firebaseApp = admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount as any),
+        })
+        console.log('🎉 Firebase inicializado correctamente desde Base64')
+        return firebaseApp
+      } catch (e) {
+        console.error('❌ Error al decodificar Base64:', e.message)
+      }
+    }
 
+    // Opción 2: Usar SERVICE_ACCOUNT_KEY como string JSON (fallback)
     const serviceAccountKey = env.get('FIREBASE_SERVICE_ACCOUNT_KEY')
 
     
