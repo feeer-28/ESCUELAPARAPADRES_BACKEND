@@ -172,7 +172,7 @@ function getMessaging() {
 
 
 
-  return admin.messaging()
+  return admin.messaging(firebaseApp)
 
 }
 
