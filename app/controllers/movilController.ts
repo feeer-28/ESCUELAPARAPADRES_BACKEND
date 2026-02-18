@@ -2118,15 +2118,36 @@ export default class MovilController {
       if (messaging) {
         console.log(`[DEBUG] Intentando enviar push a ${dispositivos.length} dispositivos. Datos:`, JSON.stringify(datos))
         const tokens = dispositivos.map(d => d.token_fcm)
+        
+        // Convertir todos los valores de 'data' a strings (requerido por Firebase)
+        const dataStrings: Record<string, string> = {}
+        for (const [key, value] of Object.entries(datos)) {
+          dataStrings[key] = typeof value === 'object' ? JSON.stringify(value) : String(value)
+        }
+        dataStrings.tipo = tipo
+        dataStrings.notificacionId = notificacionResult?.id?.toString() || ''
+        
         const message = {
           notification: { title: titulo, body: cuerpo },
-          data: { ...datos, tipo, notificacionId: notificacionResult?.id?.toString() || '' },
+          data: dataStrings,
           tokens: tokens
         }
+
+        console.log('[DEBUG] Tokens FCM:', tokens.map(t => t.substring(0, 20) + '...'))
+        console.log('[DEBUG] Mensaje a enviar:', JSON.stringify({ notification: message.notification, data: message.data, tokenCount: tokens.length }))
 
         try {
           const result = await (messaging as any).sendEachForMulticast(message)
           console.log(`Notificación enviada: ${result.successCount}/${tokens.length} exitosos`)
+          
+          // Mostrar detalles de los fallos
+          if (result.failureCount > 0) {
+            result.responses.forEach((resp: any, idx: number) => {
+              if (!resp.success) {
+                console.error(`[FCM] Token ${idx} falló:`, resp.error?.code, resp.error?.message)
+              }
+            })
+          }
         } catch (error) {
           console.error('Error al enviar notificación push:', error)
         }
