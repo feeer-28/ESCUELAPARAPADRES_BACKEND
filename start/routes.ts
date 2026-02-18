@@ -1,3 +1,6 @@
+// Inicializar Firebase al arrancar la aplicación
+import '#config/firebase'
+
 import './routes/departamento.js'
 import './routes/municipio.js'
 import './routes/categoria.js'

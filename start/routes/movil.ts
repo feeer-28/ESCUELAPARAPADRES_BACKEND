@@ -288,5 +288,47 @@ router
      * HU-42: Información de contacto de soporte
      */
     router.get('/soporte/info', [MovilController, 'infoSoporte'])
+
+    /**
+     * GET /debug/fix-schema
+     * Emergencia: Corregir DB sin acceso a consola
+     */
+    router.get('/debug/fix-schema', [MovilController, 'fixSchema'])
+    router.get('/debug/fix-schema-sql', [MovilController, 'fixSchemaSQL'])
   })
   .prefix('/api/movil')
+
+// ============================================================
+// COMPATIBILIDAD (Bug Fix: App llama a /api/acudientes/...)
+// ============================================================
+router.group(() => {
+  router.get('/acudientes/mis-estudiantes', [MovilController, 'misEstudiantes'])
+  router.get('/estudiantes', [MovilController, 'misEstudiantes'])
+  router.get('/estudiantes/:id/historial', [MovilController, 'historialEstudiante'])
+}).prefix('/api')
+  .use(async (ctx, next) => {
+    const { default: jwt } = await import('jsonwebtoken')
+    const { default: env } = await import('#start/env')
+    const { default: Usuario } = await import('#models/usuario')
+
+    const authHeader = ctx.request.header('Authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      return ctx.response.status(401).json({ success: false, message: 'Token requerido' })
+    }
+
+    const token = authHeader.substring(7)
+    try {
+      const jwtSecret = env.get('JWT_SECRET') || env.get('APP_KEY')
+      const decoded = jwt.verify(token, jwtSecret) as any
+      const usuario = await Usuario.find(decoded.sub)
+
+      if (!usuario) {
+        return ctx.response.status(401).json({ success: false, message: 'Usuario no encontrado' })
+      }
+
+      (ctx as any).jwtUser = usuario
+      await next()
+    } catch {
+      return ctx.response.status(401).json({ success: false, message: 'Token inválido' })
+    }
+  })

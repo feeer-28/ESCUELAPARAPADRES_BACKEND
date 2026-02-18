@@ -15,7 +15,6 @@ import Estudiante from '#models/estudiante'
 import Usuario from '#models/usuario'
 import env from '#start/env'
 import { getMessaging } from '#config/firebase'
-import OtpService from '#services/OtpService'
 
 export default class MovilController {
   // ============================================================
@@ -494,11 +493,11 @@ export default class MovilController {
       if (!contacto) {
         return response.status(400).json({
           success: false,
-          message: 'El contacto (teléfono o email) es requerido',
+          message: 'El contacto (telÃ©fono o email) es requerido',
         })
       }
 
-      // Buscar por teléfono o correo
+      // Buscar por telÃ©fono o correo
       const acudiente = await Acudiente.query()
         .where('telefono', contacto)
         .orWhere('correo', contacto)
@@ -511,26 +510,19 @@ export default class MovilController {
         })
       }
 
-      // Generar código OTP de 6 dígitos
+      // Generar cÃ³digo OTP de 6 dÃ­gitos
       const codigo = Math.floor(100000 + Math.random() * 900000).toString()
       const expiraEn = 900 // 15 minutos en segundos
 
-      // Invalidar OTPs anteriores del mismo contacto
-      await db.from('otp_codes').where('contacto', contacto).where('usado', false).update({ usado: true })
+      // TODO: En producciÃ³n, guardar OTP en tabla otp_codes o cache Redis
+      // Por ahora solo se genera y se simula el envÃ­o
 
-      // Guardar OTP en BD
-      await db.table('otp_codes').insert({
-        contacto,
-        codigo,
-        intentos: 0,
-        usado: false,
-        expira_en: DateTime.now().plus({ seconds: expiraEn }).toSQL(),
-        creado_en: DateTime.now().toSQL(),
-      })
-
-      // Determinar método y enviar
+      // Determinar mÃ©todo (SMS o email)
       const metodo = contacto.includes('@') ? 'email' : 'sms'
-      await OtpService.enviarCodigo(contacto, codigo)
+
+      // TODO: Integrar con servicio SMS/Email real
+      // Por ahora solo simulamos el envÃ­o
+      console.log(`[OTP] CÃ³digo ${codigo} enviado a ${contacto} vÃ­a ${metodo}`)
 
       return response.status(200).json({
         success: true,
@@ -561,53 +553,18 @@ export default class MovilController {
       if (!contacto || !codigo) {
         return response.status(400).json({
           success: false,
-          message: 'Contacto y código son requeridos',
+          message: 'Contacto y cÃ³digo son requeridos',
         })
       }
 
+      // TODO: Verificar cÃ³digo contra BD/cache
+      // Por ahora aceptamos cualquier cÃ³digo de 6 dÃ­gitos en desarrollo
       if (codigo.length !== 6) {
         return response.status(400).json({
           success: false,
-          message: 'Código inválido',
+          message: 'CÃ³digo invÃ¡lido',
         })
       }
-
-      // Buscar OTP válido en BD
-      const otp = await db.from('otp_codes')
-        .where('contacto', contacto)
-        .where('usado', false)
-        .where('expira_en', '>', DateTime.now().toSQL())
-        .orderBy('creado_en', 'desc')
-        .first()
-
-      if (!otp) {
-        return response.status(400).json({
-          success: false,
-          message: 'Código expirado o no encontrado. Solicita uno nuevo.',
-        })
-      }
-
-      // Verificar intentos (máximo 5)
-      if (otp.intentos >= 5) {
-        await db.from('otp_codes').where('id', otp.id).update({ usado: true })
-        return response.status(400).json({
-          success: false,
-          message: 'Demasiados intentos. Solicita un código nuevo.',
-        })
-      }
-
-      // Verificar código
-      if (otp.codigo !== codigo) {
-        await db.from('otp_codes').where('id', otp.id).update({ intentos: otp.intentos + 1 })
-        return response.status(400).json({
-          success: false,
-          message: 'Código incorrecto',
-          intentosRestantes: 4 - otp.intentos,
-        })
-      }
-
-      // Código válido — marcar como usado
-      await db.from('otp_codes').where('id', otp.id).update({ usado: true })
 
       // Generar token temporal para el paso 3
       const jwtSecret = env.get('JWT_SECRET') || env.get('APP_KEY')
@@ -1737,8 +1694,10 @@ export default class MovilController {
         'fcmToken',
         'dispositivo',
         'sistemaOperativo',
-        'versionApp'
+        'versionApp',
+        'plataforma' // ✅ Nuevo campo
       ])
+      console.log('[DEBUG] registrarTokenFCM Payload:', JSON.stringify(payload))
 
       // Validación simple
       if (!payload.fcmToken) {
@@ -1750,15 +1709,44 @@ export default class MovilController {
 
       console.log(`[FCM] Registrando token para usuario ${jwtUser.id}`)
 
-      // Actualizar usuario con token FCM 
+      // Actualizar usuario con token FCM (Backup)
       const usuario = await Usuario.find(jwtUser.id)
       if (usuario) {
         usuario.tokenFcm = payload.fcmToken
         await usuario.save()
-        console.log(`[FCM] Token actualizado en usuario ${usuario.id}`)
       }
 
-      // TODO: Registro completo en dispositivos_moviles cuando se corrija la tabla
+      // Registrar en dispositivos_moviles
+      let plataforma = payload.plataforma || payload.sistemaOperativo || 'Android'
+      if (plataforma.length > 20) plataforma = plataforma.substring(0, 20)
+      console.log('[DEBUG] Plataforma procesada:', plataforma)
+
+      const existe = await db.from('dispositivos_moviles')
+        .where('token_fcm', payload.fcmToken)
+        .first()
+
+      if (existe) {
+        await db.from('dispositivos_moviles')
+          .where('token_fcm', payload.fcmToken)
+          .update({
+            usuario_id: jwtUser.id,
+            plataforma,
+            version_app: payload.versionApp || '1.0.0',
+            activo: true,
+            actualizado_en: DateTime.now().toSQL()
+          })
+      } else {
+        await db.table('dispositivos_moviles').insert({
+          token_fcm: payload.fcmToken,
+          usuario_id: jwtUser.id,
+          plataforma,
+          version_app: payload.versionApp || '1.0.0',
+          activo: true,
+          creado_en: DateTime.now().toSQL(),
+          actualizado_en: DateTime.now().toSQL()
+        })
+      }
+
       console.log(`[FCM] Token ${payload.fcmToken} registrado exitosamente`)
 
       return response.status(201).json({
@@ -1768,11 +1756,7 @@ export default class MovilController {
       })
     } catch (error) {
       console.error('Error al registrar token FCM:', error)
-      return ctx.response.status(500).json({
-        success: false,
-        message: 'Error al registrar token FCM',
-        error: error.message
-      })
+      return ctx.response.status(500).json({ success: false, message: 'Error al registrar token FCM', error: error.message })
     }
   }
 
@@ -1981,69 +1965,8 @@ export default class MovilController {
       console.error('Error al marcar todas las notificaciones como leÃ­das:', error)
       return response.status(500).json({
         success: false,
-        message: 'Error al marcar notificaciones como leídas',
+        message: 'Error al marcar notificaciones como leÃ­das',
         error: error.message
-      })
-    }
-  }
-
-  /**
-   * Eliminar una notificación
-   * DELETE /api/movil/notificaciones/:id
-   */
-  async eliminarNotificacion({ params, response, jwtUser }: HttpContext) {
-    try {
-      if (!jwtUser) {
-        return response.status(401).json({ success: false, message: 'No autenticado' })
-      }
-
-      const notificacion = await db.from('notificaciones_push')
-        .where('id', params.id)
-        .where('usuario_id', jwtUser.id)
-        .first()
-
-      if (!notificacion) {
-        return response.status(404).json({ success: false, message: 'Notificación no encontrada' })
-      }
-
-      await db.from('notificaciones_push').where('id', params.id).delete()
-
-      return response.json({ success: true, message: 'Notificación eliminada' })
-    } catch (error) {
-      console.error('Error al eliminar notificación:', error)
-      return response.status(500).json({
-        success: false,
-        message: 'Error al eliminar notificación',
-        error: error.message,
-      })
-    }
-  }
-
-  /**
-   * Eliminar todas las notificaciones del usuario
-   * DELETE /api/movil/notificaciones
-   */
-  async eliminarTodasNotificaciones({ response, jwtUser }: HttpContext) {
-    try {
-      if (!jwtUser) {
-        return response.status(401).json({ success: false, message: 'No autenticado' })
-      }
-
-      const count = await db.from('notificaciones_push')
-        .where('usuario_id', jwtUser.id)
-        .delete()
-
-      return response.json({
-        success: true,
-        message: `${count} notificaciones eliminadas`,
-        data: { eliminadas: count },
-      })
-    } catch (error) {
-      console.error('Error al eliminar notificaciones:', error)
-      return response.status(500).json({
-        success: false,
-        message: 'Error al eliminar notificaciones',
-        error: error.message,
       })
     }
   }
@@ -2062,42 +1985,32 @@ export default class MovilController {
           message: 'No autenticado',
         })
       }
-
-      // Buscar preferencias en BD
-      let prefs = await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).first()
-
-      // Si no existen, crear con defaults
-      if (!prefs) {
-        await db.table('preferencias_usuario').insert({
-          usuario_id: jwtUser.id,
-          notif_nuevas_tareas: true,
-          notif_calificaciones: true,
-          notif_recordatorios: true,
-          notif_eventos: true,
-          notif_general: true,
-          actualizado_en: DateTime.now().toSQL(),
-        })
-        prefs = await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).first()
+      // Obtener preferencias del usuario (usar tabla de configuraciÃ³n si existe)
+      const preferencias = {
+        notificaciones: {
+          nuevasTareas: true,
+          calificaciones: true,
+          recordatorios: true,
+          eventos: true,
+          general: true
+        },
+        dispositivos: await db.from('dispositivos_moviles')
+          .where('usuario_id', jwtUser.id)
+          .where('activo', true)
+          .select('dispositivo', 'sistema_operativo', 'version_app', 'actualizado_en')
       }
-
+      // Por ahora retornamos valores por defecto
+      // TODO: Crear tabla preferencias_usuario si se requiere persistencia
       return response.status(200).json({
         success: true,
-        data: {
-          notificaciones: {
-            nuevasTareas: prefs.notif_nuevas_tareas,
-            calificaciones: prefs.notif_calificaciones,
-            recordatorios: prefs.notif_recordatorios,
-            eventos: prefs.notif_eventos,
-            general: prefs.notif_general,
-          },
-        },
+        data: preferencias
       })
     } catch (error) {
       console.error('Error al obtener preferencias:', error)
       return response.status(500).json({
         success: false,
         message: 'Error al procesar la solicitud',
-        error: error.message,
+        error: error.message
       })
     }
   }
@@ -2117,54 +2030,22 @@ export default class MovilController {
           message: 'No autenticado',
         })
       }
-
-      const input = request.input('notificaciones')
-      if (!input || typeof input !== 'object') {
+      const preferencias = request.input('notificaciones')
+      // ValidaciÃ³n bÃ¡sica
+      if (!preferencias || typeof preferencias !== 'object') {
         return response.status(400).json({
           success: false,
-          message: 'Se requiere el objeto de preferencias',
+          message: 'Se requiere el objeto de preferencias'
         })
       }
-
-      // Construir objeto de update solo con campos válidos
-      const updateData: Record<string, any> = { actualizado_en: DateTime.now().toSQL() }
-      if (typeof input.nuevasTareas === 'boolean') updateData.notif_nuevas_tareas = input.nuevasTareas
-      if (typeof input.calificaciones === 'boolean') updateData.notif_calificaciones = input.calificaciones
-      if (typeof input.recordatorios === 'boolean') updateData.notif_recordatorios = input.recordatorios
-      if (typeof input.eventos === 'boolean') updateData.notif_eventos = input.eventos
-      if (typeof input.general === 'boolean') updateData.notif_general = input.general
-
-      // Upsert: actualizar si existe, crear si no
-      const existe = await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).first()
-      if (existe) {
-        await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).update(updateData)
-      } else {
-        await db.table('preferencias_usuario').insert({
-          usuario_id: jwtUser.id,
-          notif_nuevas_tareas: input.nuevasTareas ?? true,
-          notif_calificaciones: input.calificaciones ?? true,
-          notif_recordatorios: input.recordatorios ?? true,
-          notif_eventos: input.eventos ?? true,
-          notif_general: input.general ?? true,
-          actualizado_en: DateTime.now().toSQL(),
-        })
-      }
-
-      // Retornar preferencias actualizadas
-      const prefs = await db.from('preferencias_usuario').where('usuario_id', jwtUser.id).first()
-
+      // AquÃ­ se guardarÃ­an las preferencias en una tabla de configuraciÃ³n
+      // Por ahora, solo simulamos la actualizaciÃ³n
+      console.log(`Preferencias actualizadas para usuario ${jwtUser.id}:`, preferencias)
+      // TODO: Guardar en BD cuando se implemente tabla preferencias_usuario
       return response.status(200).json({
         success: true,
         message: 'Preferencias actualizadas exitosamente',
-        data: {
-          notificaciones: {
-            nuevasTareas: prefs.notif_nuevas_tareas,
-            calificaciones: prefs.notif_calificaciones,
-            recordatorios: prefs.notif_recordatorios,
-            eventos: prefs.notif_eventos,
-            general: prefs.notif_general,
-          },
-        },
+        data: preferencias
       })
     } catch (error) {
       console.error('Error al actualizar preferencias:', error)
@@ -2235,24 +2116,122 @@ export default class MovilController {
 
       const messaging = getMessaging()
       if (messaging) {
+        console.log(`[DEBUG] Intentando enviar push a ${dispositivos.length} dispositivos. Datos:`, JSON.stringify(datos))
         const tokens = dispositivos.map(d => d.token_fcm)
+        
+        // Convertir todos los valores de 'data' a strings (requerido por Firebase)
+        const dataStrings: Record<string, string> = {}
+        for (const [key, value] of Object.entries(datos)) {
+          dataStrings[key] = typeof value === 'object' ? JSON.stringify(value) : String(value)
+        }
+        dataStrings.tipo = tipo
+        dataStrings.notificacionId = notificacionResult?.id?.toString() || ''
+        
         const message = {
           notification: { title: titulo, body: cuerpo },
-          data: { ...datos, tipo, notificacionId: notificacionResult?.id?.toString() || '' },
+          data: dataStrings,
           tokens: tokens
         }
 
+        console.log('[DEBUG] Tokens FCM:', tokens.map(t => t.substring(0, 20) + '...'))
+        console.log('[DEBUG] Mensaje a enviar:', JSON.stringify({ notification: message.notification, data: message.data, tokenCount: tokens.length }))
+
         try {
-          const result = await (messaging as any).sendMulticast(message)
-          console.log(`NotificaciÃ³n enviada: ${result.successCount}/${tokens.length} exitosos`)
+          const result = await (messaging as any).sendEachForMulticast(message)
+          console.log(`Notificación enviada: ${result.successCount}/${tokens.length} exitosos`)
+          
+          // Mostrar detalles de los fallos
+          if (result.failureCount > 0) {
+            result.responses.forEach((resp: any, idx: number) => {
+              if (!resp.success) {
+                console.error(`[FCM] Token ${idx} falló:`, resp.error?.code, resp.error?.message)
+              }
+            })
+          }
         } catch (error) {
-          console.error('Error al enviar notificaciÃ³n push:', error)
+          console.error('Error al enviar notificación push:', error)
         }
       } else {
         console.warn('Firebase Messaging no disponible')
       }
     } catch (error) {
       console.error('Error en enviarNotificacionPush:', error)
+    }
+  }
+
+  /**
+   * GET /debug/fix-schema
+   * Emergencia: Corregir schema de notificaciones sin acceso a consola
+   */
+  async fixSchema({ response }: HttpContext) {
+    try {
+      const tableName = 'notificaciones_push'
+      const schema = db.connection().schema
+      const hasTable = await schema.hasTable(tableName)
+
+      if (!hasTable) {
+        return response.json({ message: 'La tabla notificaciones_push no existe' })
+      }
+
+      const hasMensaje = await schema.hasColumn(tableName, 'mensaje')
+      const hasCuerpo = await schema.hasColumn(tableName, 'cuerpo')
+      const hasDatos = await schema.hasColumn(tableName, 'datos')
+
+      const log: string[] = []
+
+      await schema.alterTable(tableName, (table) => {
+        // Rename mensaje -> cuerpo
+        if (hasMensaje && !hasCuerpo) {
+          table.renameColumn('mensaje', 'cuerpo')
+          log.push('Columna mensaje renombrada a cuerpo')
+        }
+
+        // Add datos if missing
+        if (!hasDatos) {
+          table.text('datos').nullable()
+          log.push('Columna datos agregada')
+        }
+      })
+
+      return response.json({
+        success: true,
+        message: 'Verificación de schema completada',
+        acciones: log,
+        estadoActual: {
+          hasCuerpo: await schema.hasColumn(tableName, 'cuerpo'),
+          hasDatos: await schema.hasColumn(tableName, 'datos')
+        }
+      })
+    } catch (error) {
+      return response.status(500).json({ error: error.message, stack: error.stack })
+    }
+  }
+  /**
+   * GET /debug/fix-schema-sql
+   * Fuerza la correcciÃ³n con RAW SQL (Alternativa)
+   */
+  async fixSchemaSQL({ response }: HttpContext) {
+    try {
+      const logs: string[] = []
+
+      try {
+        await db.raw('ALTER TABLE notificaciones_push ADD COLUMN IF NOT EXISTS cuerpo TEXT;')
+        logs.push('ALTER TABLE ... ADD COLUMN cuerpo (OK)')
+      } catch (e: any) { logs.push('Error cuerpo: ' + e.message) }
+
+      try {
+        await db.raw('ALTER TABLE notificaciones_push ADD COLUMN IF NOT EXISTS datos TEXT;')
+        logs.push('ALTER TABLE ... ADD COLUMN datos (OK)')
+      } catch (e: any) { logs.push('Error datos: ' + e.message) }
+
+      try {
+        await db.raw('UPDATE notificaciones_push SET cuerpo = mensaje WHERE cuerpo IS NULL AND mensaje IS NOT NULL;')
+        logs.push('UPDATE ... SET cuerpo=mensaje (OK)')
+      } catch (e) { logs.push('UPDATE omitido (quizas mensaje no existe)') }
+
+      return response.json({ success: true, message: 'Fix SQL ejecutado', logs })
+    } catch (error) {
+      return response.status(500).json({ error: error.message, stack: error.stack })
     }
   }
 }

@@ -1,10 +1,12 @@
 import env from '#start/env'
-
-import * as admin from 'firebase-admin'
+import admin from 'firebase-admin'
+import path from 'path'
+import fs from 'fs'
 
 
 
 let firebaseApp: admin.app.App | null = null
+let messaging: admin.messaging.Messaging | null = null
 
 
 
@@ -25,27 +27,64 @@ function initializeFirebase() {
 
 
   try {
-    // Verificar que la API de credenciales está disponible (compatibilidad de versión)
-    if (!admin || !admin.credential || typeof (admin.credential as any).cert !== 'function') {
-      console.warn('⚠️ Firebase Admin credential API no disponible. Omite inicialización.')
-      return null
+    console.log('🔄 Iniciando configuración de Firebase...')
+
+    // Opción 1: Usar SERVICE_ACCOUNT_BASE64 (más confiable, sin problemas de escape)
+    const serviceAccountBase64 = env.get('FIREBASE_SERVICE_ACCOUNT_BASE64')
+    
+    if (serviceAccountBase64) {
+      try {
+        console.log('🔍 SERVICE_ACCOUNT_BASE64 encontrado')
+        const jsonString = Buffer.from(serviceAccountBase64, 'base64').toString('utf-8')
+        const serviceAccount = JSON.parse(jsonString)
+        console.log('✅ Base64 decodificado correctamente, project_id:', serviceAccount.project_id)
+        
+        firebaseApp = admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount as any),
+        })
+        console.log('🎉 Firebase inicializado correctamente desde Base64')
+        return firebaseApp
+      } catch (e) {
+        console.error('❌ Error al decodificar Base64:', e.message)
+      }
     }
 
-    // Opción 1: Usar SERVICE_ACCOUNT_KEY como string JSON
-
+    // Opción 2: Usar SERVICE_ACCOUNT_KEY como string JSON (fallback)
     const serviceAccountKey = env.get('FIREBASE_SERVICE_ACCOUNT_KEY')
 
     
 
     if (serviceAccountKey) {
       try {
+        console.log('🔍 SERVICE_ACCOUNT_KEY encontrado, longitud:', serviceAccountKey.length)
+        console.log('🔍 Primeros 100 caracteres:', serviceAccountKey.substring(0, 100))
+        console.log('🔍 Últimos 50 caracteres:', serviceAccountKey.substring(serviceAccountKey.length - 50))
+        console.log('🔍 Admin disponible:', typeof admin)
+        console.log('🔍 Admin credential disponible:', typeof admin.credential)
+        
         const serviceAccount = JSON.parse(serviceAccountKey)
+        console.log('✅ JSON parseado correctamente, project_id:', serviceAccount.project_id)
+        
+        // Debug: ver qué hay en la private key antes de procesar
+        console.log('🔍 Private key ANTES - primeros 100 chars:', serviceAccount.private_key.substring(0, 100))
+        console.log('🔍 Contiene \\n literales:', serviceAccount.private_key.includes('\\n'))
+        console.log('🔍 Contiene saltos de línea reales:', serviceAccount.private_key.includes('\n'))
+        
+        // Corregir los saltos de línea en la private key
+        if (serviceAccount.private_key) {
+          serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n')
+          console.log('🔧 Private key corregida, longitud:', serviceAccount.private_key.length)
+          console.log('🔍 Private key DESPUÉS - primeros 100 chars:', serviceAccount.private_key.substring(0, 100))
+        }
+        
         firebaseApp = admin.initializeApp({
           credential: admin.credential.cert(serviceAccount as any),
         })
-        console.log('✅ Firebase inicializado correctamente')
+        console.log('🎉 Firebase inicializado correctamente')
         return firebaseApp
       } catch (e) {
+        console.error('❌ Error detallado al parsear JSON:', e.message)
+        console.error('❌ Tipo de error:', e.name)
         console.warn('⚠️ SERVICE_ACCOUNT_KEY inválido. Verifica que sea JSON válido.')
       }
     }
@@ -53,22 +92,44 @@ function initializeFirebase() {
 
 
     // Opción 2: Usar SERVICE_ACCOUNT_PATH (archivo JSON)
-
     const serviceAccountPath = env.get('FIREBASE_SERVICE_ACCOUNT_PATH')
-
     
-
     if (serviceAccountPath) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const serviceAccount = require(serviceAccountPath)
-        firebaseApp = admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount as any),
-        })
-        console.log('✅ Firebase inicializado correctamente desde archivo')
-        return firebaseApp
+        console.log(`🔍 Intentando cargar Firebase desde ruta: ${serviceAccountPath}`)
+        
+        // Resolver ruta absoluta para mayor compatibilidad  
+        let resolvedPath = serviceAccountPath
+        if (!path.isAbsolute(serviceAccountPath)) {
+          resolvedPath = path.resolve(process.cwd(), serviceAccountPath)
+        }
+        
+        console.log(`📂 Ruta resuelta: ${resolvedPath}`)
+        console.log(`📁 Directorio actual: ${process.cwd()}`)
+        
+        // Verificar que el archivo existe
+        if (fs.existsSync(resolvedPath)) {
+          console.log('✅ Archivo de credenciales encontrado')
+          const serviceAccount = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'))
+          firebaseApp = admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount as any),
+          })
+          console.log('🎉 Firebase inicializado correctamente desde archivo!')
+          return firebaseApp
+        } else {
+          console.warn(`❌ Archivo no encontrado en: ${resolvedPath}`)
+          
+          // Debug adicional: listar archivos en directorio
+          try {
+            const dirPath = path.dirname(resolvedPath)
+            const files = fs.readdirSync(dirPath)
+            console.log(`📋 Archivos disponibles en ${dirPath}:`, files.filter(f => f.includes('firebase')))
+          } catch (listError) {
+            console.warn('⚠️ No se pudo listar el directorio:', listError.message)
+          }
+        }
       } catch (e) {
-        console.warn('⚠️ No se pudo leer SERVICE_ACCOUNT_PATH. Verifica la ruta al archivo JSON.')
+        console.warn('⚠️ Error al leer SERVICE_ACCOUNT_PATH:', e.message)
       }
     }
 
@@ -98,25 +159,24 @@ function initializeFirebase() {
 
 function getMessaging() {
 
-  if (!firebaseApp) {
+  if (!messaging && !firebaseApp) {
     firebaseApp = initializeFirebase()
+    if (firebaseApp) {
+      messaging = admin.messaging(firebaseApp)
+    }
   }
 
-
-
-  if (!firebaseApp) {
-
-    return null
-
-  }
-
-
-
-  return admin.messaging()
+  return messaging
 
 }
 
-
+// Auto-inicializar Firebase al cargar el módulo
+console.log('🚀 Módulo firebase.ts cargado - iniciando auto-inicialización...')
+firebaseApp = initializeFirebase()
+if (firebaseApp) {
+  messaging = admin.messaging(firebaseApp)
+  console.log('✅ Messaging inicializado y listo para usar')
+}
 
 export { initializeFirebase, getMessaging }
 
