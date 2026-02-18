@@ -536,5 +536,138 @@ export default class AsignacionesController {
 
   }
 
-}
+  async update(ctx: HttpContext) {
+    const { request, params, response } = ctx
+    const usuario = (ctx as any).jwtUser as Usuario | undefined
+    if (!usuario) {
+      return response.unauthorized({ message: 'No autenticado' })
+    }
 
+    const rol = await Role.find(usuario.rolId)
+    const nombreRol = (rol?.nombre ?? '').toLowerCase()
+    if (nombreRol !== 'docente' && nombreRol !== 'orientador') {
+      return response.forbidden({ message: 'No autorizado' })
+    }
+
+    const asignacion = await Asignacion.find(params.id)
+    if (!asignacion) {
+      return response.notFound({ message: 'Asignación no encontrada' })
+    }
+
+    // Autorización
+    let autorizado = false
+    if (nombreRol === 'docente') {
+      const docente = await Docente.query().where('usuario_id', usuario.id).first()
+      autorizado = !!docente && asignacion.docenteId === docente.id
+    } else if (nombreRol === 'orientador') {
+      const func = await Funcionario.query().where('usuario_id', usuario.id).first()
+      autorizado = !!func && (!!asignacion.institucionId ? asignacion.institucionId === func.institucionId : true)
+    }
+    if (!autorizado) {
+      return response.forbidden({ message: 'No tienes permiso para editar esta asignación' })
+    }
+
+    // Campos opcionales
+    const titulo = request.input('titulo')
+    const descripcion = request.input('descripcion')
+    const frecuencia = request.input('frecuencia')
+    const incluirEnBoletin = request.input('incluirEnBoletin') ?? request.input('incluir_en_boletin')
+    const tema = request.input('tema')
+    const fechaInicioRaw = request.input('fechaInicio') ?? request.input('fecha_inicio')
+    const fechaVencimientoRaw = request.input('fechaVencimiento') ?? request.input('fecha_vencimiento')
+    const cursoId = request.input('cursoId') ?? request.input('curso_id')
+    const cursoIds = request.input('cursoIds') ?? request.input('curso_ids')
+
+    if (titulo !== undefined) asignacion.titulo = String(titulo)
+    if (descripcion !== undefined) asignacion.descripcion = String(descripcion)
+    if (frecuencia !== undefined) asignacion.frecuencia = String(frecuencia)
+    if (incluirEnBoletin !== undefined) asignacion.incluirEnBoletin = Boolean(incluirEnBoletin)
+    if (tema !== undefined) asignacion.tema = String(tema)
+
+    if (fechaInicioRaw !== undefined) {
+      const fi = DateTime.fromISO(String(fechaInicioRaw))
+      if (!fi.isValid) return response.badRequest({ message: 'fechaInicio inválida (usa ISO: YYYY-MM-DD)' })
+      asignacion.fechaInicio = fi
+    }
+    if (fechaVencimientoRaw !== undefined) {
+      const fv = fechaVencimientoRaw ? DateTime.fromISO(String(fechaVencimientoRaw)) : null
+      if (fechaVencimientoRaw && !fv?.isValid) return response.badRequest({ message: 'fechaVencimiento inválida (usa ISO: YYYY-MM-DD)' })
+      asignacion.fechaVencimiento = fv
+    }
+
+    // Re-vincular cursos si se envían
+    const ids: number[] = Array.isArray(cursoIds)
+      ? (cursoIds as any[]).map((x) => Number(x))
+      : cursoId !== undefined && cursoId !== null
+      ? [Number(cursoId)]
+      : []
+
+    if (ids.length) {
+      const cursos = await Curso.query().whereIn('id', ids)
+      if (cursos.length !== ids.length) {
+        return response.badRequest({ message: 'Uno o más cursoIds no existen' })
+      }
+
+      asignacion.cursoId = ids.length === 1 ? ids[0] : null
+      await asignacion.save()
+      await asignacion.related('cursos').detach()
+      if (ids.length > 1) {
+        await asignacion.related('cursos').attach(ids)
+      }
+    } else {
+      await asignacion.save()
+    }
+
+    return response.ok(asignacion)
+  }
+
+  async destroy(ctx: HttpContext) {
+    const { params, response } = ctx
+    const usuario = (ctx as any).jwtUser as Usuario | undefined
+    if (!usuario) {
+      return response.unauthorized({ message: 'No autenticado' })
+    }
+
+    const rol = await Role.find(usuario.rolId)
+    const nombreRol = (rol?.nombre ?? '').toLowerCase()
+    if (nombreRol !== 'docente' && nombreRol !== 'orientador') {
+      return response.forbidden({ message: 'No autorizado' })
+    }
+
+    const asignacion = await Asignacion.find(params.id)
+    if (!asignacion) {
+      return response.notFound({ message: 'Asignación no encontrada' })
+    }
+
+    // Autorización
+    let autorizado = false
+    if (nombreRol === 'docente') {
+      const docente = await Docente.query().where('usuario_id', usuario.id).first()
+      autorizado = !!docente && asignacion.docenteId === docente.id
+    } else if (nombreRol === 'orientador') {
+      const func = await Funcionario.query().where('usuario_id', usuario.id).first()
+      autorizado = !!func && (!!asignacion.institucionId ? asignacion.institucionId === func.institucionId : true)
+    }
+    if (!autorizado) {
+      return response.forbidden({ message: 'No tienes permiso para eliminar esta asignación' })
+    }
+
+    const entregasCount = await db.from('entregas').where('asignacion_id', asignacion.id).count('* as total')
+    const califCount = await db.from('calificaciones').where('asignacion_id', asignacion.id).count('* as total')
+    const totalEntregas = Number(entregasCount[0]?.total || 0)
+    const totalCalif = Number(califCount[0]?.total || 0)
+    if (totalEntregas > 0 || totalCalif > 0) {
+      return response.conflict({
+        message: 'No se puede eliminar: existen entregas o calificaciones asociadas',
+        entregas: totalEntregas,
+        calificaciones: totalCalif,
+      })
+    }
+
+    await asignacion.related('cursos').detach()
+    await asignacion.delete()
+    return response.ok({ success: true })
+  }
+
+
+}

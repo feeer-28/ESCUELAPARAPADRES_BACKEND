@@ -1,6 +1,7 @@
 import router from '@adonisjs/core/services/router'
 import { middleware } from '#start/kernel'
 import EstudianteController from '#controllers/estudianteController'
+const MovilController = () => import('#controllers/movilController')
 
 // CRUD básico de estudiantes
 router.get('/estudiantes', [EstudianteController, 'index']).use(middleware.jwt())
@@ -20,6 +21,9 @@ router.delete('/estudiantes/:id/acudientes/:acudienteId', [EstudianteController,
 router.post('/estudiantes/:id/cambiar-curso', [EstudianteController, 'cambiarCurso']).use(middleware.jwt())
 router.post('/estudiantes/:id/retirar', [EstudianteController, 'retirar']).use(middleware.jwt())
 router.get('/estudiantes/:id/historial', [EstudianteController, 'historial']).use(middleware.jwt())
+
+// Alias web para tareas del estudiante (misma lógica que móvil, sin prefijo /api/movil)
+router.get('/estudiantes/:id/tareas', [MovilController, 'tareasEstudiante']).use(middleware.jwt())
 
 // Rutas para carga masiva Excel
 router.get('/estudiantes/plantilla-excel', [EstudianteController, 'descargarPlantilla']).use(middleware.jwt())
