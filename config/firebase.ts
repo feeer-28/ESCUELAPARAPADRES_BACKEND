@@ -6,6 +6,7 @@ import fs from 'fs'
 
 
 let firebaseApp: admin.app.App | null = null
+let messaging: admin.messaging.Messaging | null = null
 
 
 
@@ -158,25 +159,24 @@ function initializeFirebase() {
 
 function getMessaging() {
 
-  if (!firebaseApp) {
+  if (!messaging && !firebaseApp) {
     firebaseApp = initializeFirebase()
+    if (firebaseApp) {
+      messaging = admin.messaging(firebaseApp)
+    }
   }
 
-
-
-  if (!firebaseApp) {
-
-    return null
-
-  }
-
-
-
-  return admin.messaging(firebaseApp)
+  return messaging
 
 }
 
-
+// Auto-inicializar Firebase al cargar el módulo
+console.log('🚀 Módulo firebase.ts cargado - iniciando auto-inicialización...')
+firebaseApp = initializeFirebase()
+if (firebaseApp) {
+  messaging = admin.messaging(firebaseApp)
+  console.log('✅ Messaging inicializado y listo para usar')
+}
 
 export { initializeFirebase, getMessaging }
 
