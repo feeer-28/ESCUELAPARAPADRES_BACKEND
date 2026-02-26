@@ -59,26 +59,58 @@ export default class CalificacionesController {
       return response.badRequest({ message: 'La asignación de la entrega no existe' })
     }
 
-    let docenteId: number | null = null
+    let calificadoPor: number | null = null
     if (nombreRol === 'docente') {
       const docente = await Docente.query().where('usuario_id', usuario.id).first()
       if (!docente) {
         return response.badRequest({ message: 'No existe un docente asociado a este usuario' })
       }
-      docenteId = docente.id
+      calificadoPor = docente.id
     } else {
       const docenteIdFromBody = request.input('docenteId') ?? request.input('docente_id')
       if (!docenteIdFromBody) {
-        return response.badRequest({ message: 'docenteId es requerido cuando el rol es orientador' })
-      }
-      docenteId = Number(docenteIdFromBody)
-      if (Number.isNaN(docenteId)) {
-        return response.badRequest({ message: 'docenteId inválido' })
-      }
+        // Intentar resolver un docente válido para calificado_por (FK a docentes.id)
+        // 1) Si el orientador también es docente (mismo usuario), usar ese docente.id
+        const docenteAsociado = await Docente.query().where('usuario_id', usuario.id).first()
+        if (docenteAsociado) {
+          calificadoPor = docenteAsociado.id
+        } else {
+          // 2) Usar el docente asignado en la asignación, si existe y es válido
+          if (asignacion.docenteId) {
+            const docenteAsignacion = await Docente.find(asignacion.docenteId)
+            if (docenteAsignacion) {
+              calificadoPor = docenteAsignacion.id
+            }
+          }
 
-      const docente = await Docente.find(docenteId)
-      if (!docente) {
-        return response.badRequest({ message: 'El docenteId no existe' })
+          // 3) Como último recurso, tomar cualquier docente de la misma institución
+          if (!calificadoPor && asignacion.institucionId) {
+            const anyDocente = await Docente.query()
+              .where('institucion_id', asignacion.institucionId)
+              .first()
+            if (anyDocente) {
+              calificadoPor = anyDocente.id
+            }
+          }
+
+          // 4) Si no hay ninguno, solicitar docenteId explícito
+          if (!calificadoPor) {
+            return response.badRequest({
+              message:
+                'No se encontró un docente válido para registrar la calificación. Proporcione docenteId en el cuerpo de la solicitud.',
+            })
+          }
+        }
+      } else {
+        const parsedDocenteId = Number(docenteIdFromBody)
+        if (Number.isNaN(parsedDocenteId)) {
+          return response.badRequest({ message: 'docenteId inválido' })
+        }
+        const docente = await Docente.find(parsedDocenteId)
+        if (!docente) {
+          return response.badRequest({ message: 'El docenteId no existe' })
+        }
+        calificadoPor = parsedDocenteId
       }
     }
 
@@ -112,7 +144,7 @@ export default class CalificacionesController {
         escala,
         notaCualitativa: notaCualitativa ? String(notaCualitativa) : null,
         retroalimentacion: retroalimentacion ? String(retroalimentacion) : null,
-        calificadoPor: docenteId!,
+        calificadoPor: calificadoPor!,
         calificadoEn: DateTime.now(),
         periodoId: asignacion.periodoId,
         institucionId: asignacion.institucionId,
@@ -129,7 +161,7 @@ export default class CalificacionesController {
         escala,
         notaCualitativa: notaCualitativa ? String(notaCualitativa) : null,
         retroalimentacion: retroalimentacion ? String(retroalimentacion) : null,
-        calificadoPor: docenteId!,
+        calificadoPor: calificadoPor!,
         calificadoEn: DateTime.now(),
         periodoId: asignacion.periodoId,
         institucionId: asignacion.institucionId,

@@ -384,6 +384,17 @@ export default class DocenteScopeController {
     const paginated = await asignacionesQuery.paginate(page, perPage)
     const asignaciones = paginated.all()
 
+    // Determinar cuáles asignaciones son individuales (tienen filas en asignacion_estudiantes)
+    let esIndividualSet = new Set<number>()
+    if (asignaciones.length) {
+      const ids = asignaciones.map((a) => a.id)
+      const indivRows = await db
+        .from('asignacion_estudiantes as ae')
+        .whereIn('ae.asignacion_id', ids)
+        .select('ae.asignacion_id as asignacionId')
+      esIndividualSet = new Set(indivRows.map((r: any) => Number(r.asignacionId)))
+    }
+
     // Armar métricas por asignación
     const resultados = [] as any[]
     for (const asig of asignaciones) {
@@ -415,6 +426,7 @@ export default class DocenteScopeController {
           categoria: (asig as any).$preloaded?.categoria?.nombre ?? null,
           bancoTareaId: asig.bancoTareaId,
           cursos: [],
+          esIndividual: esIndividualSet.has(asig.id),
           totalEstudiantes: 0,
           entregas: 0,
           porcentajeEntrega: 0,
@@ -497,6 +509,7 @@ export default class DocenteScopeController {
         categoria: (asig as any).$preloaded?.categoria?.nombre ?? null,
         bancoTareaId: asig.bancoTareaId,
         cursos: targetCursoIds,
+        esIndividual: esIndividualSet.has(asig.id),
         estado: estadoAsignacion,
         totalEstudiantes,
         entregas: entregasCount,

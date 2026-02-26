@@ -16,7 +16,8 @@ export default await Env.create(new URL('../', import.meta.url), {
   PORT: Env.schema.number(),
   APP_KEY: Env.schema.string(),
   JWT_SECRET: Env.schema.string.optional(),
-  RECAPTCHA_SECRET_KEY: Env.schema.string(),
+  RECAPTCHA_SECRET_KEY: Env.schema.string.optional(),
+  DISABLE_RECAPTCHA: Env.schema.string.optional(),
   HOST: Env.schema.string({ format: 'host' }),
   LOG_LEVEL: Env.schema.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']),
 

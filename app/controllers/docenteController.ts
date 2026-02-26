@@ -18,8 +18,13 @@ export default class DocenteController {
   private async getDocenteCursoIds(usuario: Usuario): Promise<number[] | null> {
     const rol = await Role.find(usuario.rolId)
     const nombreRol = (rol?.nombre ?? '').toLowerCase()
-    if (nombreRol !== 'docente') {
+    if (nombreRol === 'orientador') {
+      // Orientador: acceso sin restricción a rutas de docente
       return null
+    }
+    if (nombreRol !== 'docente') {
+      // Cualquier otro rol: sin acceso (listas vacías / bloqueos)
+      return []
     }
 
     const docente = await Docente.query().where('usuario_id', usuario.id).first()

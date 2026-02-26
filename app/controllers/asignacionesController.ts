@@ -85,6 +85,7 @@ export default class AsignacionesController {
     const bancoTareaId = request.input('bancoTareaId') ?? request.input('banco_tarea_id')
     const cursoId = request.input('cursoId') ?? request.input('curso_id')
     const cursoIds = request.input('cursoIds') ?? request.input('curso_ids')
+    const estudianteIdsInput = request.input('estudianteIds') ?? request.input('estudiante_ids')
     const periodoId = request.input('periodoId') ?? request.input('periodo_id')
     const fechaInicioRaw = request.input('fechaInicio') ?? request.input('fecha_inicio')
     const fechaVencimientoRaw = request.input('fechaVencimiento') ?? request.input('fecha_vencimiento')
@@ -97,14 +98,19 @@ export default class AsignacionesController {
       return response.badRequest({ message: 'periodoId es requerido' })
     }
 
-    const ids: number[] = Array.isArray(cursoIds)
+    const idsCursos: number[] = Array.isArray(cursoIds)
       ? cursoIds.map((id: any) => Number(id))
       : cursoId !== undefined && cursoId !== null
         ? [Number(cursoId)]
         : []
+    const idsEstudiantes: number[] = Array.isArray(estudianteIdsInput)
+      ? (estudianteIdsInput as any[]).map((x) => Number(x))
+      : estudianteIdsInput !== undefined && estudianteIdsInput !== null && estudianteIdsInput !== ''
+      ? [Number(estudianteIdsInput)]
+      : []
 
-    if (!ids.length || ids.some((id) => Number.isNaN(id))) {
-      return response.badRequest({ message: 'cursoId (o cursoIds) es requerido' })
+    if ((!idsCursos.length && !idsEstudiantes.length) || idsCursos.some((id) => Number.isNaN(id)) || idsEstudiantes.some((id) => Number.isNaN(id))) {
+      return response.badRequest({ message: 'Debes enviar cursoId/cursoIds o estudianteIds válidos' })
     }
 
     const bancoTarea = await BancoTarea.find(bancoTareaId)
@@ -112,9 +118,19 @@ export default class AsignacionesController {
       return response.badRequest({ message: 'La bancoTareaId no existe' })
     }
 
-    const cursos = await Curso.query().whereIn('id', ids)
-    if (cursos.length !== ids.length) {
-      return response.badRequest({ message: 'Uno o más cursoIds no existen' })
+    let cursos: Curso[] = []
+    if (idsCursos.length) {
+      cursos = await Curso.query().whereIn('id', idsCursos)
+      if (cursos.length !== idsCursos.length) {
+        return response.badRequest({ message: 'Uno o más cursoIds no existen' })
+      }
+    }
+
+    if (idsEstudiantes.length) {
+      const ests = await Estudiante.query().whereIn('id', idsEstudiantes)
+      if (ests.length !== idsEstudiantes.length) {
+        return response.badRequest({ message: 'Uno o más estudianteIds no existen' })
+      }
     }
 
     const periodo = await Periodo.find(periodoId)
@@ -128,12 +144,13 @@ export default class AsignacionesController {
       return response.badRequest({ message: 'La categoriaId de la tarea no existe' })
     }
 
-    const docenteRows = await db
+    const docenteRows = idsCursos.length ? await db
       .from('docente_curso')
       .select('curso_id', 'docente_id', 'es_director', 'creado_en')
-      .whereIn('curso_id', ids)
+      .whereIn('curso_id', idsCursos)
       .orderBy('es_director', 'desc')
       .orderBy('creado_en', 'asc')
+      : []
 
     const docentePorCurso = new Map<number, number>()
     for (const row of docenteRows) {
@@ -144,10 +161,10 @@ export default class AsignacionesController {
       }
     }
 
-    const faltantes = ids.filter((curso) => !docentePorCurso.has(curso))
+    const faltantes = idsCursos.filter((curso) => !docentePorCurso.has(curso))
 
     const cursosPorDocente = new Map<number, number[]>()
-    for (const curso of ids) {
+    for (const curso of idsCursos) {
       const docenteId = docentePorCurso.get(curso)
       if (docenteId !== undefined) {
         const list = cursosPorDocente.get(docenteId) ?? []
@@ -173,6 +190,65 @@ export default class AsignacionesController {
     const incluirEnBoletin = Boolean(request.input('incluirEnBoletin') ?? request.input('incluir_en_boletin') ?? false)
 
     const asignacionesCreadas: Asignacion[] = []
+
+    // Caso especial: asignación individual a estudiantes (sin cursos)
+    if (idsEstudiantes.length) {
+      // Reutilizar/crear un Docente para el orientador actual como propietario de la asignación
+      let docenteOwner = await Docente.query().where('usuario_id', usuario.id).first()
+      if (!docenteOwner) {
+        const func = await Funcionario.query().where('usuario_id', usuario.id).first()
+        const institucionIdInferida = func?.institucionId ?? (await Periodo.find(periodoId))!.institucionId
+        docenteOwner = await Docente.create({
+          nombres: func?.nombre ?? 'Orientador',
+          apellidos: func?.apellido ?? 'Del Sistema',
+          tipoDocumento: 'N/A',
+          numeroDocumento: `orientador-${usuario.id}`,
+          telefono: '0000000000',
+          correo: `orientador_${usuario.id}@placeholder.local`,
+          institucionId: institucionIdInferida!,
+          usuarioId: usuario.id,
+        })
+      }
+
+      const asignacion = await Asignacion.create({
+        titulo: String(request.input('titulo') ?? bancoTarea.titulo),
+        descripcion: String(request.input('descripcion') ?? bancoTarea.descripcion),
+        frecuencia: String(request.input('frecuencia') ?? 'unica'),
+        fechaInicio,
+        fechaVencimiento,
+        incluirEnBoletin,
+        cursoId: null,
+        docenteId: docenteOwner.id,
+        categoriaId,
+        bancoTareaId: bancoTarea.id,
+        periodoId: Number(periodoId),
+        institucionId: request.input('institucionId') ?? request.input('institucion_id') ?? periodo.institucionId,
+        tema: String(request.input('tema') ?? bancoTarea.tema ?? ''),
+      })
+
+      // Pivot asignacion_estudiantes
+      const rows = idsEstudiantes.map((eid) => ({ asignacion_id: asignacion.id, estudiante_id: eid }))
+      await db.table('asignacion_estudiantes').multiInsert(rows)
+
+      // Notificar a acudientes de esos estudiantes
+      const estudiantes = await Estudiante.query()
+        .whereIn('id', idsEstudiantes)
+        .preload('acudientes', (q) => q.preload('usuario'))
+      const acudienteUserIds = new Set<number>()
+      estudiantes.forEach((e) => e.acudientes.forEach((a) => { if (a.usuarioId) acudienteUserIds.add(a.usuarioId) }))
+      for (const userId of acudienteUserIds) {
+        await MovilController.enviarNotificacionPush(
+          userId,
+          '📚 Nueva Tarea Individual',
+          `Se asignó una tarea a tu acudido: ${asignacion.titulo}`,
+          'tarea_individual',
+          { asignacion_id: asignacion.id, tipo: 'nueva_tarea_individual', fecha_vencimiento: asignacion.fechaVencimiento?.toISO() }
+        )
+      }
+
+      asignacionesCreadas.push(asignacion)
+    }
+
     // Crear asignaciones para cursos con docente asociado
     for (const [docenteId, cursosDelDocente] of cursosPorDocente.entries()) {
       const docente = await Docente.find(docenteId)

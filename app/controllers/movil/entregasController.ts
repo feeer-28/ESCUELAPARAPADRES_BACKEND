@@ -71,7 +71,7 @@ export default class MovilEntregasController {
         })
       }
 
-      // ========== VERIFICAR QUE LA ASIGNACIÓN CORRESPONDE AL CURSO DEL ESTUDIANTE ==========
+      // ========== VERIFICAR QUE LA ASIGNACIÓN CORRESPONDE AL CURSO DEL ESTUDIANTE O ES ESPECIAL ==========
       const estudiante = await Estudiante.find(estudianteId)
       if (!estudiante) {
         return response.status(404).json({
@@ -91,6 +91,16 @@ export default class MovilEntregasController {
           .where('curso_id', estudiante.cursoId)
           .first()
         asignacionCorrespondeAlCurso = Boolean(match)
+      }
+
+      // Si no corresponde por curso, verificar CASO ESPECIAL (asignacion_estudiantes)
+      if (!asignacionCorrespondeAlCurso) {
+        const matchEspecial = await db
+          .from('asignacion_estudiantes')
+          .where('asignacion_id', asignacionId)
+          .where('estudiante_id', estudianteId)
+          .first()
+        asignacionCorrespondeAlCurso = Boolean(matchEspecial)
       }
 
       if (!asignacionCorrespondeAlCurso) {

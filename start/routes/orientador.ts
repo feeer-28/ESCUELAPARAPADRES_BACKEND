@@ -30,3 +30,5 @@ router
 // Asignaciones del orientador
 router.get('/orientador/asignaciones', [OrientadorAsignacionesController, 'listarAsignaciones']).use(middleware.jwt())
 router.get('/orientador/asignaciones/:id/resumen', [OrientadorAsignacionesController, 'resumenAsignacion']).use(middleware.jwt())
+// Entregas del orientador (listado con filtros)
+router.get('/orientador/entregas', [OrientadorAsignacionesController, 'listarEntregas']).use(middleware.jwt())

@@ -118,11 +118,21 @@ router
         router.get('/movil/estudiantes/:id/tareas', [MovilController, 'tareasEstudiante'])
 
         /**
+         * GET /estudiantes/:id/tareas-especiales
+         * Lista solo las tareas especiales (asignacion_estudiantes) del estudiante
+         */
+        router.get('/estudiantes/:id/tareas-especiales', [MovilController, 'tareasEspecialesEstudiante'])
+        // Alias con prefijo /movil
+        router.get('/movil/estudiantes/:id/tareas-especiales', [MovilController, 'tareasEspecialesEstudiante'])
+
+        /**
          * GET /asignaciones/:id/detalle
          * HU-30: Detalle completo de una tarea/asignación
          * Output: Tarea, fechas, estado, entrega (si existe), calificación
          */
         router.get('/asignaciones/:id/detalle', [MovilController, 'detalleAsignacion'])
+        // Alternativa sin sufijo '/detalle'
+        router.get('/asignaciones/:id', [MovilController, 'detalleAsignacion'])
         // Alias con prefijo /movil
         router.get('/movil/asignaciones/:id/detalle', [MovilController, 'detalleAsignacion'])
 
@@ -153,6 +163,7 @@ router
         router.put('/entregas/:id', [MovilEntregasController, 'editarEntrega'])
         // Alias con prefijo /movil
         router.put('/movil/entregas/:id', [MovilEntregasController, 'editarEntrega'])
+
 
         /**
          * GET /estudiantes/:id/tareas/sync
@@ -305,6 +316,10 @@ router.group(() => {
   router.get('/acudientes/mis-estudiantes', [MovilController, 'misEstudiantes'])
   router.get('/estudiantes', [MovilController, 'misEstudiantes'])
   router.get('/estudiantes/:id/historial', [MovilController, 'historialEstudiante'])
+  router.get('/estudiantes/:id/tareas-especiales', [MovilController, 'tareasEspecialesEstudiante'])
+  router.get('/asignaciones/:id/detalle', [MovilController, 'detalleAsignacion'])
+  router.get('/asignaciones/:id', [MovilController, 'detalleAsignacion'])
+  router.post('/asignaciones/:id/entregas', [MovilEntregasController, 'enviarEntrega'])
 }).prefix('/api')
   .use(async (ctx, next) => {
     const { default: jwt } = await import('jsonwebtoken')

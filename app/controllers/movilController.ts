@@ -59,8 +59,146 @@ export default class MovilController {
       return response.status(500).json({
         success: false,
         message: 'Error en test de hash',
-        error: error.message
+        error: (error as any).message,
       })
+    }
+  }
+
+  /**
+   * Lista de tareas especiales (asignadas individualmente) para un estudiante
+   * GET /estudiantes/:id/tareas-especiales
+   * Query: ?periodo=1 (opcional, default: período activo)
+   */
+  async tareasEspecialesEstudiante({ params, request, response, jwtUser }: HttpContext) {
+    try {
+      if (!jwtUser) {
+        return response.status(401).json({ success: false, message: 'No autenticado' })
+      }
+
+      const rawEstudianteId = params.id
+      const periodoId = request.input('periodo')
+
+      const acudiente = await Acudiente.query()
+        .where('usuario_id', (jwtUser as any).id)
+        .preload('estudiantes')
+        .first()
+      if (!acudiente) return response.status(404).json({ success: false, message: 'Acudiente no encontrado' })
+
+      let estudianteId: number | null = null
+      if (rawEstudianteId === 'me') estudianteId = acudiente.estudiantes[0]?.id || null
+      else {
+        const parsed = Number(rawEstudianteId)
+        estudianteId = Number.isFinite(parsed) ? parsed : null
+      }
+      if (!estudianteId) return response.badRequest({ success: false, message: 'Parámetro estudiante inválido' })
+
+      const esVinculado = acudiente.estudiantes.some((e) => e.id === estudianteId)
+      if (!esVinculado) return response.forbidden({ success: false, message: 'No tienes permiso para ver este estudiante' })
+
+      // Período
+      let periodo
+      if (periodoId) periodo = await db.from('periodos').where('id', periodoId).first()
+      else periodo = await db.from('periodos').where('esta_activo', true).first()
+
+      if (!periodo) {
+        return response.ok({ success: true, data: [], meta: { periodo: null, total: 0, pendientes: 0, entregadas: 0, calificadas: 0 } })
+      }
+
+      // Asignaciones especiales
+      const asignaciones = await db
+        .from('asignacion_estudiantes as ae')
+        .join('asignaciones as a', 'ae.asignacion_id', 'a.id')
+        .leftJoin('categorias as c', 'a.categoria_id', 'c.id')
+        .where('ae.estudiante_id', estudianteId)
+        .where('a.periodo_id', periodo.id)
+        .select(
+          'a.id as id',
+          'a.titulo as titulo',
+          'a.descripcion as descripcion',
+          'a.fecha_inicio as fechaInicio',
+          'a.fecha_vencimiento as fechaVencimiento',
+          'c.nombre as categoriaNombre'
+        )
+        .orderBy('a.fecha_vencimiento', 'asc')
+
+      if (!asignaciones.length) {
+        return response.ok({
+          success: true,
+          data: [],
+          meta: {
+            periodo: { id: periodo.id, nombre: periodo.nombre },
+            total: 0,
+            pendientes: 0,
+            entregadas: 0,
+            calificadas: 0,
+            ultimaSincronizacion: DateTime.now().toISO(),
+          },
+        })
+      }
+
+      const asigIds = asignaciones.map((a: any) => a.id)
+      const entregas = await Entrega.query().where('estudiante_id', estudianteId).whereIn('asignacion_id', asigIds)
+      const calificaciones = await Calificacion.query().where('estudiante_id', estudianteId).whereIn('asignacion_id', asigIds)
+      const entregasMap = new Map(entregas.map((e) => [e.asignacionId, e]))
+      const calificacionesMap = new Map(calificaciones.map((c) => [c.asignacionId, c]))
+
+      const now = DateTime.now()
+      let pendientes = 0
+      let entregadas = 0
+      let calificadasCount = 0
+
+      const data = asignaciones.map((row: any) => {
+        const entrega = entregasMap.get(row.id)
+        const calificacion = calificacionesMap.get(row.id)
+        let estado: string
+        if (calificacion) {
+          estado = 'calificada'
+          calificadasCount++
+        } else if (entrega) {
+          estado = 'entregada'
+          entregadas++
+        } else if (row.fechaVencimiento && DateTime.fromJSDate(new Date(row.fechaVencimiento.toString())) < now) {
+          estado = 'vencida'
+        } else {
+          estado = 'pendiente'
+          pendientes++
+        }
+
+        const fechaVenc = row.fechaVencimiento ? DateTime.fromJSDate(new Date(row.fechaVencimiento.toString())) : null
+        const diasRestantes = fechaVenc ? Math.ceil(fechaVenc.diff(now, 'days').days) : null
+
+        return {
+          id: row.id,
+          asignacionId: row.id,
+          titulo: row.titulo,
+          descripcionCorta: row.descripcion ? String(row.descripcion).substring(0, 100) + '...' : null,
+          categoria: row.categoriaNombre || 'General',
+          fechaPublicacion: row.fechaInicio?.toISOString?.() ?? row.fechaInicio ?? null,
+          fechaVencimiento: row.fechaVencimiento?.toISOString?.() ?? row.fechaVencimiento ?? null,
+          diasRestantes,
+          frecuencia: 'Única',
+          estado,
+          tipoCalificacion: 'manual',
+          esUrgente: diasRestantes !== null && diasRestantes >= 0 && diasRestantes <= 3,
+          esIndividual: true,
+        }
+      })
+
+      return response.ok({
+        success: true,
+        data,
+        meta: {
+          periodo: { id: periodo.id, nombre: periodo.nombre },
+          total: data.length,
+          pendientes,
+          entregadas,
+          calificadas: calificadasCount,
+          ultimaSincronizacion: DateTime.now().toISO(),
+        },
+      })
+    } catch (error) {
+      console.error('Error al obtener tareas especiales:', error)
+      return response.status(500).json({ success: false, message: 'Error al procesar la solicitud' })
     }
   }
   async resetearContrasena({ request, response }: HttpContext) {
@@ -73,7 +211,6 @@ export default class MovilController {
           message: 'Documento requerido'
         })
       }
-
       const normalize = (value: string) => value.replace(/\D+/g, '')
       const documentoNormalizado = normalize(documento)
 
@@ -1172,28 +1309,33 @@ export default class MovilController {
       }
 
       // Verificar que algún estudiante está en el curso de la asignación
-      let estudianteEnCurso = acudiente.estudiantes.find(
-        (e) => e.cursoId === asignacion.cursoId
-      )
+      let estudianteEnCurso = acudiente.estudiantes.find((e) => e.cursoId === asignacion.cursoId)
 
       if (!estudianteEnCurso) {
-        // Verificar en tabla pivote
-        const cursoIds = await db
-          .from('asignacion_cursos')
-          .where('asignacion_id', asignacionId)
-          .select('curso_id')
-
+        // Verificar en tabla pivote de cursos
+        const cursoIds = await db.from('asignacion_cursos').where('asignacion_id', asignacionId).select('curso_id')
         const cursosAsignacion = cursoIds.map((c: any) => c.curso_id)
-        // Buscar el estudiante correcto que esté en uno de los cursos de la asignación
-        estudianteEnCurso = acudiente.estudiantes.find((e) =>
-          cursosAsignacion.includes(e.cursoId)
-        )
+        estudianteEnCurso = acudiente.estudiantes.find((e) => cursosAsignacion.includes(e.cursoId))
 
         if (!estudianteEnCurso) {
-          return response.status(403).json({
-            success: false,
-            message: 'No tienes acceso a esta asignación',
-          })
+          // Verificar CASO ESPECIAL: asignación dirigida a estudiante(s) específicos
+          const misEstIds = acudiente.estudiantes.map((e) => e.id)
+          const existePivot = await db
+            .from('asignacion_estudiantes')
+            .where('asignacion_id', asignacionId)
+            .whereIn('estudiante_id', misEstIds)
+            .first()
+
+          if (!existePivot) {
+            return response.status(403).json({
+              success: false,
+              message: 'No tienes acceso a esta asignación',
+            })
+          }
+
+          // Elegir el estudiante específico de la lista que está en la pivote
+          const estMatchId = Number(existePivot.estudiante_id)
+          estudianteEnCurso = acudiente.estudiantes.find((e) => e.id === estMatchId) || null
         }
       }
 
@@ -1201,6 +1343,10 @@ export default class MovilController {
       const estudianteId = estudianteEnCurso.id
       let entrega = null
       let calificacion = null
+      // Determinar si la asignación es individual (tiene filas en asignacion_estudiantes)
+      const esIndividual = Boolean(
+        await db.from('asignacion_estudiantes').where('asignacion_id', asignacionId).first()
+      )
 
       if (estudianteId) {
         const entregaDb = await Entrega.query()
@@ -1295,6 +1441,7 @@ export default class MovilController {
           fechaVencimiento: asignacion.fechaVencimiento?.toISODate(),
           diasRestantes,
           frecuencia: asignacion.frecuencia || 'Ãšnica',
+          esIndividual,
           estado,
           entrega,
           calificacion,

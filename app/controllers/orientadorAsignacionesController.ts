@@ -107,6 +107,15 @@ export default class OrientadorAsignacionesController {
 
     // Obtener cursos asociados (pivot) para estas asignaciones
     const asigIds = rows.map((r: any) => r.id)
+    // Obtener asignaciones marcadas como individuales (existen filas en asignacion_estudiantes)
+    let esIndividualSet = new Set<number>()
+    if (asigIds.length) {
+      const indivRows = await db
+        .from('asignacion_estudiantes as ae')
+        .whereIn('ae.asignacion_id', asigIds)
+        .select('ae.asignacion_id as asignacionId')
+      esIndividualSet = new Set(indivRows.map((r: any) => Number(r.asignacionId)))
+    }
     let cursosMap = new Map<number, { id: number; nombre: string }[]>()
     if (asigIds.length) {
       const cursosPivot = await db
@@ -146,6 +155,7 @@ export default class OrientadorAsignacionesController {
         categoria: r.categoria,
         docente: [r.docenteNombre, r.docenteApellido].filter(Boolean).join(' ').trim() || null,
         cursos,
+        esIndividual: esIndividualSet.has(r.id),
         estado: estadoCalc,
       }
     })
@@ -255,5 +265,100 @@ export default class OrientadorAsignacionesController {
         noEntregados,
       },
     })
+  }
+
+  // GET /orientador/entregas
+  async listarEntregas(ctx: HttpContext) {
+    const guard = await this.requireOrientador(ctx)
+    if ((guard as any)?.response) return guard
+    const { response, request } = ctx
+    const { institucionId } = guard as any
+
+    const periodoId = request.input('periodoId') ?? request.input('periodo')
+    const cursoId = request.input('cursoId') ?? request.input('curso')
+    const asignacionId = request.input('asignacionId') ?? request.input('asignacion')
+    const estado = String(request.input('estado') ?? '').toLowerCase() // enviada | entregada | entregada_tardia | calificada
+    const q = String(request.input('q') ?? '').trim()
+    const page = Math.max(1, Number(request.input('page') ?? 1))
+    const perPage = Math.min(100, Math.max(1, Number(request.input('perPage') ?? 20)))
+
+    const base = db
+      .from('entregas as en')
+      .join('asignaciones as a', 'en.asignacion_id', 'a.id')
+      .join('estudiantes as e', 'en.estudiante_id', 'e.id')
+      .leftJoin('cursos as c', 'e.curso_id', 'c.id')
+      .leftJoin('calificaciones as cal', 'cal.entrega_id', 'en.id')
+      .leftJoin('asignacion_estudiantes as ae', function () {
+        this.on('ae.asignacion_id', '=', 'en.asignacion_id').andOn('ae.estudiante_id', '=', 'en.estudiante_id')
+      })
+      .where('a.institucion_id', institucionId)
+
+    if (periodoId) base.where('a.periodo_id', periodoId)
+    if (cursoId) base.where('e.curso_id', cursoId)
+    if (asignacionId) base.where('en.asignacion_id', asignacionId)
+    if (estado) base.where('en.estado', estado)
+    if (q) {
+      base.where((qb) => {
+        qb.whereILike('a.titulo', `%${q}%`).orWhereILike('e.nombres', `%${q}%`).orWhereILike('e.apellidos', `%${q}%`)
+      })
+    }
+
+    const countRes = await base.clone().countDistinct('en.id as total')
+    const total = Number(countRes[0]?.total || 0)
+
+    const rows = await base
+      .clone()
+      .select(
+        'en.id',
+        'en.asignacion_id as asignacionId',
+        'a.titulo as asignacionTitulo',
+        'en.estudiante_id as estudianteId',
+        'e.nombres as estudianteNombre',
+        'e.apellidos as estudianteApellido',
+        'e.curso_id as cursoId',
+        'c.nombre as cursoNombre',
+        'en.fecha_entrega as fechaEntrega',
+        'en.estado as estado',
+        'en.nombre_envio as nombreEnvio',
+        'en.evidencia_texto as evidenciaTexto',
+        'en.archivos_url as archivosRaw',
+        'cal.nota as calNota',
+        'cal.escala as calEscala',
+        'ae.id as esIndividualFlag'
+      )
+      .orderBy('en.id', 'desc')
+      .limit(perPage)
+      .offset((page - 1) * perPage)
+
+    const data = rows.map((r: any) => {
+      let archivos: any[] = []
+      const raw: any = r.archivosRaw
+      if (raw) {
+        if (Array.isArray(raw)) archivos = raw
+        else if (typeof raw === 'object') archivos = raw
+        else if (typeof raw === 'string') {
+          const s = raw.trim()
+          if (s && s !== '[object Object]' && (s.startsWith('[') || s.startsWith('{'))) {
+            try { archivos = JSON.parse(s) } catch { archivos = [] }
+          }
+        }
+      }
+
+      return {
+        id: r.id,
+        asignacion: { id: r.asignacionId, titulo: r.asignacionTitulo },
+        estudiante: { id: r.estudianteId, nombre: [r.estudianteNombre, r.estudianteApellido].filter(Boolean).join(' ').trim() },
+        curso: r.cursoId ? { id: r.cursoId, nombre: r.cursoNombre } : null,
+        fechaEntrega: r.fechaEntrega,
+        estado: r.estado,
+        nombreEnvio: r.nombreEnvio,
+        descripcion: r.evidenciaTexto,
+        archivos,
+        esIndividual: Boolean(r.esIndividualFlag),
+        calificacion: r.calNota !== null && r.calNota !== undefined ? { nota: r.calNota, escala: r.calEscala } : null,
+      }
+    })
+
+    return response.ok({ success: true, data, meta: { page, perPage, total } })
   }
 }

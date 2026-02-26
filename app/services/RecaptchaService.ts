@@ -18,7 +18,13 @@ export default class RecaptchaService {
   }
 
   static async verify(token: string, ip?: string): Promise<VerifyResponse> {
+    const disable = String(env.get('DISABLE_RECAPTCHA') ?? '0') === '1'
+    const isProduction = String(env.get('NODE_ENV')) === 'production'
     const secret = env.get('RECAPTCHA_SECRET_KEY')
+
+    if (disable || (!isProduction && !secret)) {
+      return { success: true }
+    }
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 4000)
     try {
