@@ -2,26 +2,42 @@ import type { HttpContext } from '@adonisjs/core/http'
 import Curso from '#models/curso'
 
 export default class CursoController {
-  async index({ response }: HttpContext) {
-    const cursos = await Curso.query().orderBy('id', 'desc')
-    return response.ok(cursos)
+async index({ response }: HttpContext) {
+  const cursos = await Curso
+    .query()
+    .withCount('estudiantes')
+    .orderBy('id', 'desc')
+
+  const cursosTransformados = cursos.map(curso => ({
+    ...curso.serialize(),
+    totalEstudiantes: curso.$extras.estudiantes_count
+  }))
+
+  return response.ok(cursosTransformados)
+}
+
+ async porInstitucion({ params, request, response }: HttpContext) {
+  const institucionIdRaw = params.institucionId ?? request.input('institucionId') ?? request.input('institucion_id')
+  const institucionId = Number(institucionIdRaw)
+
+  if (!institucionIdRaw || Number.isNaN(institucionId)) {
+    return response.badRequest({ message: 'institucionId inválido' })
   }
 
-  async porInstitucion({ params, request, response }: HttpContext) {
-    const institucionIdRaw = params.institucionId ?? request.input('institucionId') ?? request.input('institucion_id')
-    const institucionId = Number(institucionIdRaw)
-    if (!institucionIdRaw || Number.isNaN(institucionId)) {
-      return response.badRequest({ message: 'institucionId inválido' })
-    }
+  const cursos = await Curso
+    .query()
+    .where('institucion_id', institucionId)
+    .withCount('estudiantes')
+    .orderBy('grado_id', 'asc')
+    .orderBy('nombre', 'asc')
 
-    const cursos = await Curso.query()
-      .where('institucion_id', institucionId)
-      .orderBy('grado_id', 'asc')
-      .orderBy('nombre', 'asc')
+  const cursosTransformados = cursos.map(curso => ({
+    ...curso.serialize(),
+    totalEstudiantes: curso.$extras.estudiantes_count
+  }))
 
-    return response.ok({ cursos })
-  }
-
+  return response.ok({ cursos: cursosTransformados })
+}
   async show({ params, response }: HttpContext) {
     const curso = await Curso.find(params.id)
     if (!curso) {

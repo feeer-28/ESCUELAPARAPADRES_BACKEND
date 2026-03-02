@@ -110,8 +110,29 @@ export default class DocenteController {
     return response.ok({ message: 'Logout exitoso' })
   }
 
-  async index({ response }: HttpContext) {
-    const docentes = await Docente.query().orderBy('id', 'desc')
+  async index({ response, auth }: HttpContext) {
+    const usuario = auth.user
+    let institucionId: number | null = null
+
+    if (usuario) {
+      const rol = await Role.find(usuario.rolId)
+      const nombreRol = (rol?.nombre ?? '').toLowerCase()
+      
+      if (nombreRol === 'orientador') {
+        const func = await Funcionario.query().where('usuario_id', usuario.id).first()
+        institucionId = func?.institucionId ?? null
+      } else if (nombreRol === 'docente') {
+        const docente = await Docente.query().where('usuario_id', usuario.id).first()
+        institucionId = docente?.institucionId ?? null
+      }
+    }
+
+    let query = Docente.query().orderBy('id', 'desc')
+    if (institucionId) {
+      query = query.where('institucion_id', institucionId)
+    }
+
+    const docentes = await query
     return response.ok(docentes)
   }
 

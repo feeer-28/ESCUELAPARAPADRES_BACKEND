@@ -17,6 +17,9 @@ router
   .use(middleware.jwt())
 router.get('/orientadores/estudiantes', [OrientadorController, 'listarEstudiantesInstitucion']).use(middleware.jwt())
 
+// Listar docentes de la institución del orientador (debe ir antes de /:id)
+router.get('/orientadores/docentes', [DocenteController, 'index']).use(middleware.jwt())
+
 router.get('/orientadores/:id', [OrientadorController, 'show']).use(middleware.jwt())
 router.post('/orientadores', [OrientadorController, 'store']).use(middleware.jwt())
 router.put('/orientadores/:id', [OrientadorController, 'update']).use(middleware.jwt())

@@ -324,6 +324,20 @@ export default class DocenteScopeController {
     })
   }
 
+  async docentes(ctx: HttpContext) {
+    const { response } = ctx
+
+    const docente = await this.getDocenteOrFail(ctx)
+    if (!docente) return
+
+    const docentes = await Docente.query()
+      .where('institucion_id', docente.institucionId!)
+      .orderBy('apellidos')
+      .orderBy('nombres')
+
+    return response.ok({ docentes })
+  }
+
   async asignaciones(ctx: HttpContext) {
     const { request, response } = ctx
 
