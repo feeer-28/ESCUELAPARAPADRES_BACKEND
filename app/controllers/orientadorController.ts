@@ -512,47 +512,48 @@ export default class OrientadorController {
     }
   }
 
-  async listarEstudiantesInstitucion({ response, jwtUser }: HttpContext) {
-    try {
-      const esOrientador = await this.userEsOrientador(jwtUser)
-      if (!esOrientador) {
-        return response.forbidden({
-          success: false,
-          message: 'No autorizado: el usuario no es orientador',
-        })
-      }
-
-      const orientador = await Funcionario.query().where('usuario_id', jwtUser!.id).firstOrFail()
-      const institucionId = orientador.institucionId
-      if (!institucionId) {
-        return response.badRequest({
-          success: false,
-          message: 'El orientador no tiene institución asociada',
-        })
-      }
-
-      const estudiantes = await db
-        .from('estudiantes as e')
-        .join('cursos as c', 'e.curso_id', 'c.id')
-        .where('c.institucion_id', institucionId)
-        .select('e.*', 'c.nombre as curso', 'c.grado_id as grado_id')
-        .orderBy('e.nombres')
-
-      return response.ok({ success: true, data: estudiantes, total: estudiantes.length })
-    } catch (error) {
-      if ((error as any)?.code === 'E_ROW_NOT_FOUND') {
-        return response.forbidden({
-          success: false,
-          message: 'No autorizado: el usuario no es orientador o no tiene registro de funcionario',
-        })
-      }
-
-      console.error('Error al listar estudiantes por institución:', error)
-      return response.status(500).json({
+ async listarEstudiantesInstitucion({ response, jwtUser }: HttpContext) {
+  try {
+    const esOrientador = await this.userEsOrientador(jwtUser)
+    if (!esOrientador) {
+      return response.forbidden({
         success: false,
-        message: 'Error al listar estudiantes por institución',
-        error: error.message,
+        message: 'No autorizado: el usuario no es orientador',
       })
     }
+
+    const orientador = await Funcionario.query()
+      .where('usuario_id', jwtUser!.id)
+      .firstOrFail()
+
+    const institucionId = orientador.institucionId
+
+    if (!institucionId) {
+      return response.badRequest({
+        success: false,
+        message: 'El orientador no tiene institución asociada',
+      })
+    }
+
+    const estudiantes = await db
+      .from('estudiantes as e')
+      .leftJoin('cursos as c', 'e.curso_id', 'c.id') //  CAMBIO AQUÍ
+      .where('c.institucion_id', institucionId)
+      .select('e.*', 'c.nombre as curso', 'c.grado_id as grado_id')
+      .orderBy('e.nombres')
+
+    return response.ok({
+      success: true,
+      data: estudiantes,
+      total: estudiantes.length,
+    })
+  } catch (error) {
+    console.error('Error al listar estudiantes por institución:', error)
+    return response.status(500).json({
+      success: false,
+      message: 'Error al listar estudiantes por institución',
+      error: error.message,
+    })
   }
+}
 }

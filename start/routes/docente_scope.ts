@@ -10,5 +10,6 @@ router
     router.get('/docente/entregas', [DocenteScopeController, 'entregas'])
     router.get('/docente/asignaciones', [DocenteScopeController, 'asignaciones'])
     router.get('/docente/asignaciones/:id/resumen', [DocenteScopeController, 'asignacionResumen'])
+    router.get('/docente/docentes', [DocenteScopeController, 'docentes'])
   })
   .use(middleware.jwt())
