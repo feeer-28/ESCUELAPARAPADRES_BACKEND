@@ -16,6 +16,7 @@ import Acudiente from '#models/acudiente'
 import Auditoria from '#models/auditoria'
 import BancoTarea from '#models/banco_tarea'
 import Docente from '#models/docente'
+import Funcionario from '#models/funcionario'
 import Notificacion from '#models/notificacion'
 
 const AuthFinder = withAuthFinder(() => hash.use('scrypt'), {
@@ -64,6 +65,11 @@ export default class Usuario extends compose(BaseModel, AuthFinder) {
     foreignKey: 'usuarioId',
   })
   declare docente: HasOne<typeof Docente>
+
+  @hasOne(() => Funcionario, {
+    foreignKey: 'usuarioId',
+  })
+  declare funcionario: HasOne<typeof Funcionario>
 
   @hasMany(() => Auditoria, {
     foreignKey: 'usuarioId',
