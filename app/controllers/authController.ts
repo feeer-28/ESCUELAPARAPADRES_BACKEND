@@ -17,10 +17,19 @@ export default class AuthController {
     nombreRol: string
   ) {
     try {
-      const { correo, contrasena } = request.only(['correo', 'contrasena'])
+      const { correo, contrasena, password } = request.only(['correo', 'contrasena', 'password'])
+      
+      // Compatibilidad: aceptar 'password' o 'contrasena'
+      const contrasenaFinal = contrasena || password
+
+      console.log('=== LOGIN DEBUG ===')
+      console.log('📧 Correo recibido:', correo)
+      console.log('🔐 Contraseña recibida:', contrasenaFinal ? '***' : 'VACÍA')
+      console.log('🔑 Longitud contraseña:', contrasenaFinal?.length || 0)
 
       // Validar campos requeridos
-      if (!correo || !contrasena) {
+      if (!correo || !contrasenaFinal) {
+        console.log('❌ Validación falló: correo o contraseña vacíos')
         return response.status(400).json({
           success: false,
           message: 'El correo y la contraseña son requeridos',
@@ -30,7 +39,17 @@ export default class AuthController {
       // Buscar usuario por correo
       const usuario = await Usuario.query().where('correo', correo).preload('rol').first()
 
+      console.log('👤 Usuario encontrado:', !!usuario)
+      if (usuario) {
+        console.log('📋 ID usuario:', usuario.id)
+        console.log('📧 Correo guardado:', usuario.correo)
+        console.log('🔐 Hash guardado:', usuario.contrasenaHash)
+        console.log('✅ ¿Está activo?:', usuario.estaActivo)
+        console.log('🎭 Rol ID:', usuario.rolId)
+      }
+
       if (!usuario) {
+        console.log('❌ Usuario no encontrado')
         return response.status(401).json({
           success: false,
           message: 'Correo o contraseña incorrectos',
@@ -38,7 +57,8 @@ export default class AuthController {
       }
 
       // Verificar que el rol sea el permitido para este endpoint
-      if (!rolesPermitidos.includes(usuario.rolId)) {
+      // Si rolesPermitidos está vacío, aceptar cualquier rol (login genérico)
+      if (rolesPermitidos.length > 0 && !rolesPermitidos.includes(usuario.rolId)) {
         return response.status(422).json({
           success: false,
           message: `Usuario no autorizado para login de ${nombreRol}`,
@@ -54,8 +74,12 @@ export default class AuthController {
       }
 
       // Verificar contraseña
-      const isPasswordValid = await hash.verify(usuario.contrasenaHash, contrasena)
+      console.log('🔍 Verificando contraseña...')
+      const isPasswordValid = await hash.verify(usuario.contrasenaHash, contrasenaFinal)
+      console.log('✅ ¿Contraseña válida?:', isPasswordValid)
+      
       if (!isPasswordValid) {
+        console.log('❌ Contraseña incorrecta')
         return response.status(401).json({
           success: false,
           message: 'Correo o contraseña incorrectos',
@@ -116,6 +140,15 @@ export default class AuthController {
         error: error.message,
       })
     }
+  }
+
+  /**
+   * Login genérico para todos los roles
+   * POST /login
+   */
+  async login(ctx: HttpContext) {
+    // Saltar validación de roles - aceptar cualquier rol
+    return this.loginGenerico(ctx, [], 'general')
   }
 
   /**
@@ -207,7 +240,7 @@ export default class AuthController {
       }
 
       // Actualizar contraseña
-      usuario.contrasenaHash = await hash.make(nuevaContrasena)
+      usuario.contrasenaHash = nuevaContrasena // El modelo hashea automáticamente
       usuario.debeCambiarContrasena = false
       await usuario.save()
 
@@ -248,6 +281,65 @@ export default class AuthController {
       return response.internalServerError({
         success: false,
         message: 'Error al cerrar sesión',
+      })
+    }
+  }
+
+  /**
+   * Debug: Resetear contraseña a un valor conocido (solo desarrollo)
+   * POST /debug/resetear-contrasena
+   */
+  async resetearPasswordDebug({ request, response }: HttpContext) {
+    try {
+      console.log('=== DEBUG RESETEAR CONTRASEÑA ===')
+
+      const { correo, nuevaContrasena } = request.only(['correo', 'nuevaContrasena'])
+
+      if (!correo || !nuevaContrasena) {
+        return response.badRequest({
+          success: false,
+          message: 'correo y nuevaContrasena son requeridos',
+        })
+      }
+
+      // Buscar usuario
+      const usuario = await Usuario.query().where('correo', correo).first()
+
+      if (!usuario) {
+        return response.notFound({ success: false, message: 'Usuario no encontrado' })
+      }
+
+      console.log('✅ Usuario encontrado:', usuario.id)
+
+      // Generar nuevo hash
+      const nuevoHash = await hash.make(nuevaContrasena)
+
+      // Actualizar contraseña
+      await Usuario.query()
+        .where('id', usuario.id)
+        .update({ 
+          contrasena_hash: nuevoHash,
+          debe_cambiar_contrasena: false
+        })
+
+      console.log('✅ Contraseña reseteada correctamente')
+
+      return response.ok({
+        success: true,
+        message: 'Contraseña reseteada exitosamente',
+        data: {
+          correo: usuario.correo,
+          nuevaContrasena: nuevaContrasena,
+          mensaje: 'Ahora puedes hacer login con esta contraseña'
+        }
+      })
+
+    } catch (error) {
+      console.error('Error al resetear contraseña (debug):', error)
+      return response.internalServerError({
+        success: false,
+        message: 'Error al resetear contraseña',
+        details: error.message,
       })
     }
   }

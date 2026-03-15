@@ -1,35 +1,25 @@
 import router from '@adonisjs/core/services/router'
 import { middleware } from '#start/kernel'
 import DocenteController from '#controllers/docenteController'
+import DocenteTareasController from '#controllers/docente_tareas' // 🔥 Importar nuevo controlador
 
 // Rutas públicas (autenticación)
 router.post('/docentes/login', [DocenteController, 'login'])
 router.post('/docentes/logout', [DocenteController, 'logout']).use(middleware.jwt())
 
-// ========================================
-// Rutas para gestión de estudiantes y acudientes por docentes
-// ========================================
-
-// Gestión de estudiantes (rutas específicas primero)
-router.get('/docentes/estudiantes', [DocenteController, 'listarEstudiantes']).use(middleware.jwt())
-router.get('/docentes/estudiantes/:id', [DocenteController, 'verEstudiante']).use(middleware.jwt())
-router.put('/docentes/estudiantes/:id', [DocenteController, 'editarEstudiante']).use(middleware.jwt())
-
-// Gestión de acudientes (rutas específicas primero)
-router.get('/docentes/acudientes', [DocenteController, 'listarAcudientes']).use(middleware.jwt())
-router.get('/docentes/acudientes/:id', [DocenteController, 'verAcudiente']).use(middleware.jwt())
-router.put('/docentes/acudientes/:id', [DocenteController, 'editarAcudiente']).use(middleware.jwt())
-
-// Rutas protegidas con JWT (lectura) - rutas genéricas al final
+// Rutas protegidas con JWT (lectura) - rutas específicas PRIMERO
 router.get('/docentes', [DocenteController, 'index']).use(middleware.jwt())
-router.get('/docentes/:id', [DocenteController, 'show']).use(middleware.jwt())
+router.get('/docentes/mis-tareas', [DocenteTareasController, 'misTareas']).use(middleware.jwt()) // 🔥 Para tareas (todas las instituciones)
+router.get('/docentes/mis-cursos', [DocenteTareasController, 'misCursos']).use(middleware.jwt()) // 🔥 CORREGIDO: Para cursos
+router.get('/docentes/mis-tareas-institucion', [DocenteTareasController, 'misTareasInstitucion']).use(middleware.jwt()) // 🔥 Para tareas de mi institución
+router.get('/docentes/:id', [DocenteController, 'show']).use(middleware.jwt()) // 🔥 Ruta con parámetro al final
 
-// Rutas protegidas - Solo Admin Sistema
+// Rutas protegidas - Admin Sistema y Orientadores
 router.post('/docentes', [DocenteController, 'store'])
-  .use([middleware.jwt(), middleware.adminSistema()])
+  .use([middleware.jwt(), middleware.orientadorOAdmin()])
 router.put('/docentes/:id', [DocenteController, 'update'])
-  .use([middleware.jwt(), middleware.adminSistema()])
+  .use([middleware.jwt(), middleware.orientadorOAdmin()])
 router.patch('/docentes/:id', [DocenteController, 'update'])
-  .use([middleware.jwt(), middleware.adminSistema()])
+  .use([middleware.jwt(), middleware.orientadorOAdmin()])
 router.delete('/docentes/:id', [DocenteController, 'destroy'])
-  .use([middleware.jwt(), middleware.adminSistema()])
+  .use([middleware.jwt(), middleware.orientadorOAdmin()])

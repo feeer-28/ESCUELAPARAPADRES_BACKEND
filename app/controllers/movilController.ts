@@ -236,7 +236,7 @@ export default class MovilController {
       console.log('📏 Longitud documento:', documentoNormalizado.length)
       console.log('🔑 Caracteres del documento:', documentoNormalizado.split('').map(c => `${c}(${c.charCodeAt(0)})`))
 
-      usuario.contrasenaHash = await hash.make(documentoNormalizado)
+      usuario.contrasenaHash = documentoNormalizado // El modelo hashea automáticamente
       usuario.debeCambiarContrasena = false
       await usuario.save()
 
@@ -409,7 +409,7 @@ export default class MovilController {
         const passwordNormalizado = normalize(password)
         if (passwordNormalizado === documentoNormalizado) {
           console.log('🔐 Primera vez - generando hash...')
-          usuario.contrasenaHash = await hash.make(documentoNormalizado)
+          usuario.contrasenaHash = documentoNormalizado // El modelo hashea automáticamente
           usuario.debeCambiarContrasena = false
           await usuario.save()
           isPasswordValid = true

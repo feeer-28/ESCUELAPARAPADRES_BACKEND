@@ -30,4 +30,6 @@ router.get('/estudiantes/plantilla-excel', [EstudianteController, 'descargarPlan
 router.post('/estudiantes/validar-excel', [EstudianteController, 'validarExcel']).use(middleware.jwt())
 router.post('/estudiantes/carga-masiva', [EstudianteController, 'cargaMasiva']).use(middleware.jwt())
 router.post('/estudiantes/carga-masiva-dual', [EstudianteController, 'cargaMasivaDual']).use(middleware.jwt())
+router.post('/estudiantes/carga-masiva-simple', [EstudianteController, 'cargaMasivaEstudiantes']).use(middleware.jwt())
+router.post('/estudiantes/carga-masiva-completa', [EstudianteController, 'cargaMasivaCompleta']).use(middleware.jwt())
 

@@ -15,6 +15,8 @@ router.get('/acudientes/:id', [AcudienteController, 'show']).use(middleware.jwt(
 // Rutas protegidas - Solo Admin Sistema
 router.post('/acudientes', [AcudienteController, 'store'])
   .use([middleware.jwt(), middleware.adminSistema()])
+router.post('/acudientes/carga-masiva', [AcudienteController, 'cargaMasiva'])
+  .use([middleware.jwt(), middleware.adminSistema()])
 router.put('/acudientes/:id', [AcudienteController, 'update'])
   .use([middleware.jwt(), middleware.adminSistema()])
 router.patch('/acudientes/:id', [AcudienteController, 'update'])

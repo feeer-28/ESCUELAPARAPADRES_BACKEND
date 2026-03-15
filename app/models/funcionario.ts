@@ -36,6 +36,19 @@ export default class Funcionario extends BaseModel {
   @column({ columnName: 'institucion_id' })
   declare institucionId: number | null
 
+  // Campos adicionales para coordinadores y otros funcionarios
+  @column({ columnName: 'tipo_documento' })
+  declare tipoDocumento: string | null
+
+  @column({ columnName: 'numero_documento' })
+  declare numeroDocumento: string | null
+
+  @column({ columnName: 'area_que_orienta' })
+  declare areaQueOrienta: string | null
+
+  @column({ columnName: 'centro_interes' })
+  declare centroInteres: string | null
+
   @belongsTo(() => Role, {
     foreignKey: 'rolId',
   })

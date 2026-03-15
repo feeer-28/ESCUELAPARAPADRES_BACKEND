@@ -30,6 +30,9 @@ import './routes/movil.js'
 import './routes/setup.js'
 import './routes/reportes.js'
 import './routes/debug.js'
+import './routes/debug_login.js'
+import './routes/nivelEducativo.js'
+import './routes/estructuraAcademica.js'
 
 
 

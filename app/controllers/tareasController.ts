@@ -5,13 +5,37 @@ import { existsSync } from 'node:fs'
 
 import BancoTarea from '#models/banco_tarea'
 import Categoria from '#models/categoria'
+import Funcionario from '#models/funcionario'
 import Role from '#models/role'
 import Usuario from '#models/usuario'
 
 export default class TareasController {
-  async index({ response }: HttpContext) {
-    const tareas = await BancoTarea.query().orderBy('id', 'desc')
-    return response.ok(tareas)
+  async index({ response, jwtUser }: HttpContext) {
+    console.log('=== DEBUG LISTAR TAREAS ===')
+    console.log('👤 JWT User ID:', jwtUser?.id)
+    console.log('👤 JWT User Rol:', jwtUser?.rolId)
+
+    if (!jwtUser) {
+      console.log('❌ Usuario no autenticado')
+      return response.unauthorized({ message: 'No autenticado' })
+    }
+
+    // 🔥 OBTENER TODAS LAS TAREAS DE TODAS LAS INSTITUCIONES
+    // Sin filtrar por institución
+    const tareas = await BancoTarea.query()
+      .preload('institucion')
+      .preload('categoria')
+      .preload('creador')
+      .orderBy('id', 'desc')
+
+    console.log('📋 Total tareas encontradas (todas las instituciones):', tareas.length)
+    console.log('=== FIN DEBUG LISTAR TAREAS ===')
+
+    return response.ok({
+      success: true,
+      data: tareas,
+      total: tareas.length
+    })
   }
 
   async show({ params, response }: HttpContext) {
@@ -59,10 +83,48 @@ export default class TareasController {
       return response.unauthorized({ message: 'No autenticado' })
     }
 
+    console.log('=== DEBUG CREAR TAREA ===')
+    console.log('👤 JWT User ID:', usuario.id)
+    console.log('👤 JWT User Rol:', usuario.rolId)
+    console.log('👤 JWT User Email:', usuario.correo)
+
     const rol = await Role.find(usuario.rolId)
     const nombreRol = (rol?.nombre ?? '').toLowerCase()
     if (nombreRol !== 'docente' && nombreRol !== 'orientador') {
+      console.log('❌ Usuario sin permiso para crear tareas:', nombreRol)
       return response.forbidden({ message: 'No tienes permiso para crear tareas' })
+    }
+
+    console.log('✅ Usuario con permiso para crear tareas:', nombreRol)
+
+    // Obtener institución del usuario
+    let institucionId: number | null = null
+    let institucionNombre: string = 'No asignada'
+
+    try {
+      const funcionario = await Funcionario.query()
+        .where('usuario_id', usuario.id)
+        .preload('institucion')
+        .first()
+
+      if (funcionario && funcionario.institucionId) {
+        institucionId = funcionario.institucionId
+        institucionNombre = funcionario.institucion?.nombre || 'Sin nombre'
+        console.log('🏢 Institución encontrada:', {
+          id: institucionId,
+          nombre: institucionNombre
+        })
+      } else {
+        console.log('⚠️ Usuario sin institución asignada')
+        return response.badRequest({ 
+          message: 'El usuario no tiene una institución asignada. No se puede crear la tarea.' 
+        })
+      }
+    } catch (error) {
+      console.error('❌ Error al obtener institución del usuario:', error)
+      return response.internalServerError({ 
+        message: 'Error al obtener la institución del usuario' 
+      })
     }
 
     const enlaceString = request.input('enlace')
@@ -155,6 +217,7 @@ export default class TareasController {
       })(),
       vecesUtilizada: 0,
       creadoPor: usuario.id,
+      institucionId: institucionId, // Agregamos la institución
     }
 
     if (!payload.titulo || !payload.descripcion || !payload.categoriaId) {
@@ -175,6 +238,18 @@ export default class TareasController {
 
     const tarea = await BancoTarea.create(payload)
 
+    console.log('🎉 TAREA CREADA CON ÉXITO:')
+    console.log('📋 Tarea ID:', tarea.id)
+    console.log('📋 Tarea título:', tarea.titulo)
+    console.log('📋 Tarea descripción:', tarea.descripcion.substring(0, 50) + '...')
+    console.log('📋 Tarea categoría:', payload.categoriaId)
+    console.log('🏢 Institución ID:', institucionId)
+    console.log('🏢 Institución nombre:', institucionNombre)
+    console.log('👤 Creado por ID:', usuario.id)
+    console.log('👤 Creado por rol:', nombreRol)
+    console.log('📅 Fecha creación:', new Date().toISOString())
+    console.log('=== FIN DEBUG CREAR TAREA ===')
+
     if (archivoEnlace) {
       const relativeFolder = `uploads/tareas/${tarea.id}`
       const absoluteFolder = app.makePath('public', relativeFolder)
@@ -189,9 +264,21 @@ export default class TareasController {
 
       tarea.enlace = `/${relativeFolder}/${name}`
       await tarea.save()
+      
+      console.log('📎 Archivo guardado:', tarea.enlace)
     }
 
-    return response.created(tarea)
+    return response.created({
+      success: true,
+      message: 'Tarea creada exitosamente',
+      data: {
+        ...tarea.toJSON(),
+        institucion: {
+          id: institucionId,
+          nombre: institucionNombre
+        }
+      }
+    })
   }
 
   async update(ctx: HttpContext) {
