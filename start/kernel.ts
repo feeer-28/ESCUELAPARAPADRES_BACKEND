@@ -46,4 +46,6 @@ export const middleware = router.named({
   adminSistema: () => import('#middleware/admin_sistema_middleware'),
   rector: () => import('#middleware/rector_middleware'),
   coordinador: () => import('#middleware/coordinador_middleware'),
+  coordinadorORector: () => import('#middleware/coordinador_o_rector_middleware'),
+  orientadorOAdmin: () => import('#middleware/orientador_o_admin_middleware'),
 })

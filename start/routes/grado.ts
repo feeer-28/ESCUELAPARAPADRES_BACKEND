@@ -3,8 +3,8 @@ import { middleware } from '#start/kernel'
 import GradoController from '#controllers/gradoController'
 
 // Rutas públicas (solo lectura)
-router.get('/grados', [GradoController, 'index'])
-router.get('/grados/:id', [GradoController, 'show'])
+router.get('/grados', [GradoController, 'index']).use(middleware.jwt()) // 🔥 Agregar JWT
+router.get('/grados/:id', [GradoController, 'show']).use(middleware.jwt()) // 🔥 Agregar JWT
 
 // Rutas protegidas - Solo Admin Sistema
 router.post('/grados', [GradoController, 'store'])

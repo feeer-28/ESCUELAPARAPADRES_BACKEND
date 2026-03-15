@@ -28,9 +28,21 @@ export default class CoordinadoresController {
       }
 
       // Obtener institución del coordinador
+      console.log('=== DEBUG COORDINADOR DASHBOARD ===')
+      console.log('👤 JWT User ID:', jwtUser.id)
+      console.log('👤 JWT User Rol:', jwtUser.rolId)
+      
       const coordinador = await Funcionario.query().where('usuario_id', jwtUser.id).first()
 
+      console.log('👤 Coordinador encontrado:', !!coordinador)
+      if (coordinador) {
+        console.log('🏢 Coordinador ID:', coordinador.id)
+        console.log('🏢 Coordinador institucionId:', coordinador.institucionId)
+        console.log('🏢 Coordinador nombre:', coordinador.nombre)
+      }
+
       if (!coordinador || !coordinador.institucionId) {
+        console.log('❌ Coordinador sin institución asignada')
         return response.status(404).json({
           success: false,
           message: 'Coordinador no tiene institución asignada',
@@ -38,6 +50,11 @@ export default class CoordinadoresController {
       }
 
       const institucionId = coordinador.institucionId
+      
+      console.log('🔍 DEBUG COORDINADOR INSTITUCIÓN:')
+      console.log('📋 institucionId:', institucionId)
+      console.log('📋 Tipo de institucionId:', typeof institucionId)
+      console.log('📋 ¿Es NaN?:', isNaN(institucionId))
 
       // Total de cursos
       const totalCursosResult = await db
@@ -1804,8 +1821,10 @@ export default class CoordinadoresController {
         })
       }
 
-      // Obtener todos los grados
-      const grados = await Grado.query().orderBy('orden', 'asc')
+      // Obtener grados de la institución del coordinador
+      const grados = await Grado.query()
+        .where('institucion_id', institucionId)
+        .orderBy('orden', 'asc')
 
       // Para cada grado, obtener información de cursos de la institución
       const gradosConInfo = await Promise.all(

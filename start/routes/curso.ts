@@ -4,8 +4,9 @@ import CursoController from '#controllers/cursoController'
 
 // Rutas públicas (solo lectura)
 router.get('/cursos', [CursoController, 'index'])
-router.get('/cursos/institucion/:institucionId', [CursoController, 'porInstitucion'])
-router.get('/cursos/:id', [CursoController, 'show'])
+router.get('/cursos/institucion/:institucionId', [CursoController, 'porInstitucion']).use(middleware.jwt()) // 🔥 Agregar JWT
+router.get('/cursos/mis-cursos', [CursoController, 'misCursos']).use(middleware.jwt()) // 🔥 Nuevo endpoint para docentes
+router.get('/cursos/:id', [CursoController, 'show']).use(middleware.jwt()) // 🔥 Agregar JWT
 
 // Rutas protegidas - Solo Admin Sistema
 router.post('/cursos', [CursoController, 'store'])

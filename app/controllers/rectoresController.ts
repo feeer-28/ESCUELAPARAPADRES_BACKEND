@@ -1,10 +1,12 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import { DateTime } from 'luxon'
 import Funcionario from '#models/funcionario'
+import Docente from '#models/docente'
 import Usuario from '#models/usuario'
 import Institucion from '#models/institucion'
 import Periodo from '#models/periodo'
 import db from '@adonisjs/lucid/services/db'
+import hash from '@adonisjs/core/services/hash'
 
 export default class RectoresController {
   /**
@@ -28,7 +30,7 @@ export default class RectoresController {
         })
       }
 
-      // Obtener el funcionario con su institución
+      // Obtener el funcionario con su institución (los rectores están en funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser.id)
         .preload('institucion')
@@ -150,11 +152,19 @@ export default class RectoresController {
         })
       }
 
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
+      console.log('=== DEBUG CREAR COORDINADOR ===')
+      console.log('👤 JWT User ID:', jwtUser.id)
+      console.log('👤 JWT User Rol:', jwtUser.rolId)
+      
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser.id)
         .preload('institucion')
         .firstOrFail()
+
+      console.log('🏢 Rector encontrado:', rector.id)
+      console.log('🏢 Rector institucionId:', rector.institucionId)
+      console.log('🏢 Institución preload:', rector.institucion?.nombre || 'SIN INSTITUCIÓN')
 
       const institucionId = rector.institucionId
 
@@ -167,23 +177,53 @@ export default class RectoresController {
         })
       }
 
-      const { correo, contrasena, nombre, apellido, telefono } = request.only([
+      const { 
+        correo, 
+        contrasena, 
+        nombre, 
+        apellido, 
+        telefono,
+        tipoDocumento,
+        numeroDocumento,
+        direccion,
+        areaQueOrienta,
+        centroInteres
+      } = request.only([
         'correo',
         'contrasena',
         'nombre',
         'apellido',
         'telefono',
+        'tipoDocumento',
+        'numeroDocumento',
+        'direccion',
+        'areaQueOrienta',
+        'centroInteres'
       ])
 
       // Validar campos requeridos
-      if (!correo || !contrasena || !nombre || !apellido) {
+      if (!correo || !nombre || !apellido) {
         return response.status(400).json({
           success: false,
-          message: 'Los campos correo, contraseña, nombre y apellido son requeridos',
+          message: 'Los campos correo, nombre y apellido son requeridos',
           errors: {
-            required: ['correo', 'contrasena', 'nombre', 'apellido'],
+            required: ['correo', 'nombre', 'apellido'],
           },
         })
+      }
+
+      // Si no se proporciona contraseña, usar la temporal por defecto
+      const contrasenaFinal = contrasena || 'Temp123456'
+
+      // Validar formato de contraseña (solo si se proporciona y no es la temporal)
+      if (contrasena && contrasena !== 'Temp123456') {
+        // Validación básica: mínimo 6 caracteres
+        if (contrasena.length < 6) {
+          return response.status(400).json({
+            success: false,
+            message: 'La contraseña debe tener al menos 6 caracteres',
+          })
+        }
       }
 
       // Validar formato de correo
@@ -195,47 +235,52 @@ export default class RectoresController {
         })
       }
 
-      // Validar formato de contraseña
-      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/
-      if (!passwordRegex.test(contrasena)) {
-        return response.status(400).json({
-          success: false,
-          message:
-            'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial (@$!%*?&)',
-        })
-      }
-
       // Verificar que el correo no esté registrado
       const existeCorreo = await Usuario.findBy('correo', correo)
       if (existeCorreo) {
         return response.status(400).json({
           success: false,
-          message: 'El correo ya está registrado en el sistema',
+          message: 'El correo ya está registrado',
+          error: 'EMAIL_EXISTS'
         })
       }
 
-      // Crear usuario con rol de coordinador (rolId = 3)
+      // Validar formato de contraseña (solo si se proporciona)
+      if (contrasena && contrasena !== 'Temp123456') {
+        const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/
+        if (!passwordRegex.test(contrasena)) {
+          return response.status(400).json({
+            success: false,
+            message:
+              'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial (@$!%*?&)',
+          })
+        }
+      }
+
+      // Crear usuario para el coordinador
       const usuario = await Usuario.create({
         correo,
-        contrasenaHash: contrasena,
-        rolId: 3, // coordinador
+        contrasenaHash: contrasenaFinal, // El modelo hashea automáticamente
+        rolId: 3, // Coordinador
         estaActivo: true,
         debeCambiarContrasena: true,
       })
 
-      // Crear funcionario (coordinador) en la institución del rector
+      // Crear funcionario (coordinador)
       const coordinador = await Funcionario.create({
         nombre,
         apellido,
-        telefono: telefono || null,
-        institucionId, // Institución del rector (no se puede cambiar)
+        telefono: telefono || '',
+        correoInstitucional: correo,
+        direccion: direccion || '',
+        rolId: 3, // Coordinador
         usuarioId: usuario.id,
-        rolId: 3,
+        institucionId: institucionId
       })
 
       return response.status(201).json({
         success: true,
-        message: `Coordinador creado exitosamente en ${institucion.nombre}`,
+        message: 'Coordinador creado exitosamente',
         data: {
           usuario: {
             id: usuario.id,
@@ -251,6 +296,14 @@ export default class RectoresController {
             institucionId: coordinador.institucionId,
             institucionNombre: institucion.nombre,
           },
+          credenciales: {
+            correo,
+            contrasena: contrasenaFinal,
+            mensaje: contrasena === 'Temp123456' 
+              ? '🔑 CONTRASEÑA TEMPORAL - Se recomienda cambiarla en el primer login'
+              : '🔑 CONTRASEÑA PERSONALIZADA - Guardar estas credenciales',
+            esTemporal: contrasena === 'Temp123456'
+          }
         },
       })
     } catch (error) {
@@ -269,7 +322,7 @@ export default class RectoresController {
    */
   async listarCoordinadores({ response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()
@@ -318,7 +371,7 @@ export default class RectoresController {
    */
   async listarOrientadores({ response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()
@@ -367,7 +420,7 @@ export default class RectoresController {
    */
   async listarDocentes({ response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()
@@ -411,7 +464,7 @@ export default class RectoresController {
    */
   async listarCursos({ response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()
@@ -469,7 +522,7 @@ export default class RectoresController {
    */
   async miInstitucion({ response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .preload('institucion', (query) => {
@@ -524,7 +577,7 @@ export default class RectoresController {
    */
   async actualizarMiInstitucion({ request, response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()
@@ -592,7 +645,7 @@ export default class RectoresController {
    */
   async listarPeriodos({ response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()
@@ -634,7 +687,7 @@ export default class RectoresController {
    */
   async crearPeriodo({ request, response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()
@@ -707,7 +760,7 @@ export default class RectoresController {
    */
   async actualizarPeriodo({ params, request, response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()
@@ -796,7 +849,7 @@ export default class RectoresController {
    */
   async eliminarPeriodo({ params, response, jwtUser }: HttpContext) {
     try {
-      // Obtener la institución del rector
+      // Obtener la institución del rector (desde funcionarios)
       const rector = await Funcionario.query()
         .where('usuario_id', jwtUser!.id)
         .firstOrFail()

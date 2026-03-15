@@ -175,6 +175,1019 @@ export default class EstudianteController {
     return response.ok(estudiante)
   }
 
+  /**
+   * Carga masiva de estudiantes con formato específico
+   * POST /estudiantes/carga-masiva-simple
+   */
+  async cargaMasivaEstudiantes({ request, response }: HttpContext) {
+    console.log('=== 🚀 INICIO CARGA MASIVA ESTUDIANTES ===')
+    console.log('🕐 Hora de inicio:', new Date().toISOString())
+    
+    try {
+      const archivo = request.file('archivo', {
+        size: '10mb',
+        extnames: ['xlsx', 'xls', 'csv']
+      })
+
+      console.log('📁 Validando archivo...')
+
+      if (!archivo) {
+        console.log('❌ ERROR: No se proporcionó ningún archivo')
+        return response.badRequest({
+          success: false,
+          message: 'Se requiere un archivo Excel o CSV',
+          error_type: 'NO_FILE',
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      if (!archivo.isValid) {
+        console.log('❌ ERROR: Archivo no válido:', archivo.errors)
+        return response.badRequest({
+          success: false,
+          message: 'Archivo no válido',
+          errors: archivo.errors,
+          error_type: 'INVALID_FILE',
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      console.log('✅ Archivo válido:', {
+        nombre: archivo.clientName,
+        tamaño: archivo.size,
+        tipo: archivo.extname
+      })
+
+      // Mover archivo temporal
+      const uploadsPath = app.makePath('uploads')
+      const fileName = `estudiantes_${Date.now()}.${archivo.extname}`
+      await archivo.move(uploadsPath, { name: fileName })
+
+      console.log('📂 Archivo guardado temporalmente:', fileName)
+
+      // Leer archivo Excel/CSV
+      const xlsx = await import('xlsx')
+      const filePath = app.makePath('uploads', fileName)
+      const workbook = xlsx.readFile(filePath)
+      const sheetName = workbook.SheetNames[0]
+      const worksheet = workbook.Sheets[sheetName]
+      const datos = xlsx.utils.sheet_to_json(worksheet)
+
+      console.log('📋 Archivo leído exitosamente')
+      console.log('📊 Total de registros encontrados:', datos.length)
+      console.log('📊 Hoja procesada:', sheetName)
+
+      if (datos.length === 0) {
+        console.log('⚠️ ADVERTENCIA: El archivo está vacío')
+        return response.badRequest({
+          success: false,
+          message: 'El archivo no contiene registros',
+          error_type: 'EMPTY_FILE',
+          total_registros: 0,
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      const resultados = {
+        procesados: 0,
+        exitosos: 0,
+        errores: [] as Array<{ fila: number, error: string, datos: any, tipo: string }>
+      }
+
+      console.log('🔄 Iniciando procesamiento de registros...')
+
+      // Procesar cada fila
+      for (let i = 0; i < datos.length; i++) {
+        const fila = i + 2 // Excel empieza en fila 2
+        const registro = datos[i] as any
+        resultados.procesados++
+
+        console.log(`\n📝 Procesando fila ${fila}/${datos.length + 1}...`)
+
+        try {
+          // 🔥 MAPEAR COLUMNAS DEL EXCEL A VARIABLES DEL SISTEMA
+          const datosMapeados = {
+            // Datos básicos del estudiante
+            estudiante_tipo_documento: registro['TIPO DOCUMENTO ESTUDIANTE'] || 'TI',
+            estudiante_documento: registro['DOCUMENTO ESTUDIANTE'],
+            estudiante_nombres: registro['NOMBRE ESTUDIANTE'],
+            estudiante_apellidos: registro['APELLIDO ESTUDIANTE'],
+            estudiante_fecha_nacimiento: registro['FECHA NACIMIENTO'],
+            estudiante_sexo: registro['GENERO'] || 'M',
+            estudiante_grado: registro['GRADO'],
+            estudiante_curso: registro['CURSO'],
+            
+            // Datos de contacto y ubicación
+            estudiante_direccion: registro['DIRECCION'],
+            estudiante_barrio: registro['BARRIO'],
+            estudiante_telefono: registro['TELEFONO'],
+            estudiante_correo: registro['CORREO'],
+            
+            // Datos médicos
+            estudiante_eps: registro['EPS'],
+            estudiante_tipo_sangre: registro['TIPO SANGRE'],
+            estudiante_rh: registro['RH'],
+            estudiante_discapacidad: registro['DISCAPACIDAD'],
+            estudiante_medicamentos: registro['MEDICAMENTOS'],
+            estudiante_alergias: registro['ALERGIAS'],
+            estudiante_enfermedades: registro['ENFERMEDADES']
+          }
+
+          console.log(`👤 Estudiante: ${datosMapeados.estudiante_nombres} ${datosMapeados.estudiante_apellidos}`)
+          console.log(`🆔 Documento: ${datosMapeados.estudiante_documento}`)
+          console.log(`📚 Curso: ${datosMapeados.estudiante_curso}`)
+
+          // Validar campos requeridos
+          if (!datosMapeados.estudiante_documento || !datosMapeados.estudiante_nombres || 
+              !datosMapeados.estudiante_apellidos || !datosMapeados.estudiante_curso) {
+            const error = 'Faltan campos requeridos (documento, nombres, apellidos, curso)'
+            console.log(`❌ ERROR VALIDACIÓN: ${error}`)
+            resultados.errores.push({
+              fila,
+              error,
+              datos: datosMapeados,
+              tipo: 'VALIDACION_CAMPOS'
+            })
+            continue
+          }
+
+          // Verificar si el estudiante ya existe
+          console.log('🔍 Verificando si el estudiante ya existe...')
+          const estudianteExistente = await Estudiante.query()
+            .where('numero_documento', datosMapeados.estudiante_documento)
+            .first()
+
+          let estudiante: Estudiante
+
+          if (estudianteExistente) {
+            console.log('✅ Estudiante existente encontrado, actualizando...')
+            // Actualizar estudiante existente
+            estudiante = estudianteExistente
+            estudiante.nombres = datosMapeados.estudiante_nombres
+            estudiante.apellidos = datosMapeados.estudiante_apellidos
+            estudiante.tipoDocumento = datosMapeados.estudiante_tipo_documento
+            estudiante.cursoId = datosMapeados.estudiante_curso
+            estudiante.fechaNacimiento = datosMapeados.estudiante_fecha_nacimiento ? 
+              DateTime.fromJSDate(new Date(datosMapeados.estudiante_fecha_nacimiento)) : estudiante.fechaNacimiento
+            estudiante.sexo = datosMapeados.estudiante_sexo
+            estudiante.direccion = datosMapeados.estudiante_direccion
+            estudiante.barrio = datosMapeados.estudiante_barrio
+            estudiante.telefono = datosMapeados.estudiante_telefono
+            estudiante.correoElectronico = datosMapeados.estudiante_correo
+            estudiante.eps = datosMapeados.estudiante_eps
+            estudiante.grupoSanguineo = datosMapeados.estudiante_tipo_sangre
+            estudiante.rh = datosMapeados.estudiante_rh
+            estudiante.discapacidad = datosMapeados.estudiante_discapacidad
+            estudiante.medicamentos = datosMapeados.estudiante_medicamentos
+            estudiante.alergias = datosMapeados.estudiante_alergias
+            estudiante.enfermedades = datosMapeados.estudiante_enfermedades
+            await estudiante.save()
+            
+            console.log(`✅ ESTUDIANTE ACTUALIZADO: ${estudiante.numeroDocumento} (${estudiante.nombres} ${estudiante.apellidos})`)
+          } else {
+            console.log('🆕 Creando nuevo estudiante...')
+            
+            // 🔥 VALIDAR QUE EXISTA EL CURSO
+            if (!datosMapeados.estudiante_curso) {
+              const error = 'El estudiante requiere un curso válido'
+              console.log(`❌ ERROR CURSO: ${error}`)
+              resultados.errores.push({
+                fila,
+                error,
+                datos: datosMapeados,
+                tipo: 'CURSO_REQUERIDO'
+              })
+              continue
+            }
+
+            // Verificar que el curso exista
+            console.log(`🔍 Verificando existencia del curso ${datosMapeados.estudiante_curso}...`)
+            const curso = await db.from('cursos')
+              .where('id', datosMapeados.estudiante_curso)
+              .first()
+
+            if (!curso) {
+              const error = `El curso ${datosMapeados.estudiante_curso} no existe`
+              console.log(`❌ ERROR CURSO: ${error}`)
+              resultados.errores.push({
+                fila,
+                error,
+                datos: datosMapeados,
+                tipo: 'CURSO_NO_EXISTE'
+              })
+              continue
+            }
+
+            console.log(`✅ Curso encontrado: ${curso.nombre} (ID: ${curso.id})`)
+
+            // Crear nuevo estudiante
+            estudiante = await Estudiante.create({
+              nombres: datosMapeados.estudiante_nombres,
+              apellidos: datosMapeados.estudiante_apellidos,
+              tipoDocumento: datosMapeados.estudiante_tipo_documento,
+              numeroDocumento: datosMapeados.estudiante_documento,
+              cursoId: datosMapeados.estudiante_curso,
+              fechaNacimiento: datosMapeados.estudiante_fecha_nacimiento ? 
+                DateTime.fromJSDate(new Date(datosMapeados.estudiante_fecha_nacimiento)) : undefined,
+              sexo: datosMapeados.estudiante_sexo,
+              direccion: datosMapeados.estudiante_direccion,
+              barrio: datosMapeados.estudiante_barrio,
+              telefono: datosMapeados.estudiante_telefono,
+              correoElectronico: datosMapeados.estudiante_correo,
+              eps: datosMapeados.estudiante_eps,
+              grupoSanguineo: datosMapeados.estudiante_tipo_sangre,
+              rh: datosMapeados.estudiante_rh,
+              discapacidad: datosMapeados.estudiante_discapacidad,
+              medicamentos: datosMapeados.estudiante_medicamentos,
+              alergias: datosMapeados.estudiante_alergias,
+              enfermedades: datosMapeados.estudiante_enfermedades
+            })
+
+            console.log(`🎉 ESTUDIANTE CREADO: ${estudiante.numeroDocumento} (${estudiante.nombres} ${estudiante.apellidos}) en curso ${curso.nombre}`)
+          }
+
+          resultados.exitosos++
+          console.log(`✅ Fila ${fila} procesada exitosamente`)
+
+        } catch (error) {
+          console.error(`❌ ERROR PROCESANDO FILA ${fila}:`, error.message)
+          resultados.errores.push({
+            fila,
+            error: error.message,
+            datos: registro,
+            tipo: 'ERROR_PROCESAMIENTO'
+          })
+        }
+      }
+
+      // Limpiar archivo temporal
+      try {
+        await import('fs').then(fs => fs.promises.unlink(filePath))
+        console.log('🗑️ Archivo temporal eliminado')
+      } catch (error) {
+        console.log('⚠️ No se pudo eliminar archivo temporal:', error.message)
+      }
+
+      // 🎯 RESUMEN FINAL CON LOGS DETALLADOS
+      console.log('\n=== 📊 RESUMEN FINAL CARGA MASIVA ===')
+      console.log(`🕐 Hora de finalización:`, new Date().toISOString())
+      console.log(`📋 Total registros procesados:`, resultados.procesados)
+      console.log(`✅ Registros exitosos:`, resultados.exitosos)
+      console.log(`❌ Registros con errores:`, resultados.errores.length)
+      console.log(`📈 Tasa de éxito:`, `${((resultados.exitosos / resultados.procesados) * 100).toFixed(2)}%`)
+
+      if (resultados.errores.length > 0) {
+        console.log('\n🔍 DETALLE DE ERRORES:')
+        resultados.errores.forEach((error, index) => {
+          console.log(`${index + 1}. Fila ${error.fila}: ${error.tipo} - ${error.error}`)
+        })
+      }
+
+      console.log('=== 🏁 FIN CARGA MASIVA ESTUDIANTES ===\n')
+
+      // 📤 RESPUESTA ENRIQUECIDA PARA EL FRONTEND
+      const respuestaFinal = {
+        success: resultados.exitosos > 0,
+        message: resultados.exitosos > 0 
+          ? `Carga masiva completada: ${resultados.exitosos} de ${resultados.procesados} estudiantes procesados exitosamente`
+          : 'No se pudo procesar ningún estudiante correctamente',
+        data: {
+          procesados: resultados.procesados,
+          exitosos: resultados.exitosos,
+          errores: resultados.errores.length,
+          tasa_exito: ((resultados.exitosos / resultados.procesados) * 100).toFixed(2),
+          errores_detalle: resultados.errores,
+          timestamp_inicio: new Date().toISOString(),
+          duracion_estimada: `${resultados.procesados * 0.5} segundos`
+        },
+        frontend_notifications: {
+          success: resultados.exitosos > 0 ? {
+            title: '¡Carga Exitosa!',
+            message: `${resultados.exitosos} estudiantes procesados correctamente`,
+            type: 'success',
+            duration: 5000
+          } : null,
+          error: resultados.errores.length > 0 ? {
+            title: 'Errores Detectados',
+            message: `${resultados.errores.length} estudiantes no pudieron ser procesados`,
+            type: 'warning',
+            duration: 8000
+          } : null,
+          info: {
+            title: 'Proceso Completado',
+            message: `Total procesados: ${resultados.procesados} estudiantes`,
+            type: 'info',
+            duration: 3000
+          }
+        }
+      }
+
+      return response.ok(respuestaFinal)
+
+    } catch (error) {
+      console.error('❌ ERROR GENERAL EN CARGA MASIVA:', error)
+      console.log('=== 🚨 ERROR CRÍTICO ===')
+      console.log('🕐 Hora del error:', new Date().toISOString())
+      console.log('📄 Error:', error.message)
+      console.log('📍 Stack trace:', error.stack)
+      console.log('=== 🚨 FIN ERROR CRÍTICO ===\n')
+
+      return response.internalServerError({
+        success: false,
+        message: 'Error crítico en la carga masiva de estudiantes',
+        error: error.message,
+        error_type: 'CRITICAL_ERROR',
+        timestamp: new Date().toISOString(),
+        frontend_notifications: {
+          error: {
+            title: 'Error Crítico',
+            message: 'Ocurrió un error inesperado. Por favor, contacta al administrador.',
+            type: 'error',
+            duration: 10000
+          }
+        }
+      })
+    }
+  }
+
+  /**
+   * Carga masiva combinada de acudientes y estudiantes (mismo archivo, hojas separadas)
+   * POST /estudiantes/carga-masiva-completa
+   */
+  async cargaMasivaCompleta({ request, response }: HttpContext) {
+    console.log('=== 🚀 INICIO CARGA MASIVA COMBINADA (HOJAS SEPARADAS) ===')
+    console.log('🕐 Hora de inicio:', new Date().toISOString())
+    
+    try {
+      const archivo = request.file('archivo', {
+        size: '15mb',
+        extnames: ['xlsx', 'xls', 'csv']
+      })
+
+      console.log('📁 Validando archivo con hojas separadas...')
+
+      if (!archivo) {
+        console.log('❌ ERROR: No se proporcionó ningún archivo')
+        return response.badRequest({
+          success: false,
+          message: 'Se requiere un archivo Excel con hojas separadas para acudientes y estudiantes',
+          error_type: 'NO_FILE',
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      if (!archivo.isValid) {
+        console.log('❌ ERROR: Archivo no válido:', archivo.errors)
+        return response.badRequest({
+          success: false,
+          message: 'Archivo no válido',
+          errors: archivo.errors,
+          error_type: 'INVALID_FILE',
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      console.log('✅ Archivo válido:', {
+        nombre: archivo.clientName,
+        tamaño: archivo.size,
+        tipo: archivo.extname
+      })
+
+      // Mover archivo temporal
+      const uploadsPath = app.makePath('uploads')
+      const fileName = `carga_completa_${Date.now()}.${archivo.extname}`
+      await archivo.move(uploadsPath, { name: fileName })
+
+      console.log('📂 Archivo guardado temporalmente:', fileName)
+
+      // Leer archivo Excel/CSV
+      const xlsx = await import('xlsx')
+      const filePath = app.makePath('uploads', fileName)
+      const fileBuffer = await readFile(filePath)
+      const workbook = xlsx.read(fileBuffer, { type: 'buffer' })
+
+      console.log('📊 Hojas encontradas en el archivo:', workbook.SheetNames)
+
+      // Buscar hojas específicas
+      let hojaAcudientes = null
+      let hojaEstudiantes = null
+
+      // Nombres de hojas esperados (en diferentes idiomas/formatos)
+      const nombresHojaAcudientes = ['acudientes', 'Acudientes', 'ACUDIENTES', 'guardians', 'Guardians', 'GUARDIANS']
+      const nombresHojaEstudiantes = ['estudiantes', 'Estudiantes', 'ESTUDIANTES', 'students', 'Students', 'STUDENTS']
+
+      // Encontrar hoja de acudientes
+      for (const nombreHoja of workbook.SheetNames) {
+        if (nombresHojaAcudientes.includes(nombreHoja)) {
+          hojaAcudientes = nombreHoja
+          break
+        }
+      }
+
+      // Encontrar hoja de estudiantes
+      for (const nombreHoja of workbook.SheetNames) {
+        if (nombresHojaEstudiantes.includes(nombreHoja)) {
+          hojaEstudiantes = nombreHoja
+          break
+        }
+      }
+
+      // Si no encuentra hojas específicas, usar la primera y segunda hoja
+      if (!hojaAcudientes && workbook.SheetNames.length >= 1) {
+        hojaAcudientes = workbook.SheetNames[0]
+        console.log('⚠️ Hoja de acudientes no encontrada por nombre, usando primera hoja:', hojaAcudientes)
+      }
+
+      if (!hojaEstudiantes && workbook.SheetNames.length >= 2) {
+        hojaEstudiantes = workbook.SheetNames[1]
+        console.log('⚠️ Hoja de estudiantes no encontrada por nombre, usando segunda hoja:', hojaEstudiantes)
+      }
+
+      if (!hojaAcudientes) {
+        console.log('❌ ERROR: No se encontró hoja de acudientes')
+        return response.badRequest({
+          success: false,
+          message: 'No se encontró hoja de acudientes. Nombres esperados: ' + nombresHojaAcudientes.join(', '),
+          error_type: 'NO_ACUDIENTES_SHEET',
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      if (!hojaEstudiantes) {
+        console.log('❌ ERROR: No se encontró hoja de estudiantes')
+        return response.badRequest({
+          success: false,
+          message: 'No se encontró hoja de estudiantes. Nombres esperados: ' + nombresHojaEstudiantes.join(', '),
+          error_type: 'NO_ESTUDIANTES_SHEET',
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      console.log('✅ Hojas identificadas:')
+      console.log('  👤 Hoja de Acudientes:', hojaAcudientes)
+      console.log('  👨‍🎓 Hoja de Estudiantes:', hojaEstudiantes)
+
+      // Procesar hoja de acudientes
+      console.log('\n🔄 PROCESANDO HOJA DE ACUDIENTES...')
+      const worksheetAcudientes = workbook.Sheets[hojaAcudientes]
+      const datosAcudientes = xlsx.utils.sheet_to_json(worksheetAcudientes)
+      console.log('📊 Total de acudientes encontrados:', datosAcudientes.length)
+
+      // Procesar hoja de estudiantes
+      console.log('\n🔄 PROCESANDO HOJA DE ESTUDIANTES...')
+      const worksheetEstudiantes = workbook.Sheets[hojaEstudiantes]
+      const datosEstudiantes = xlsx.utils.sheet_to_json(worksheetEstudiantes)
+      console.log('📊 Total de estudiantes encontrados:', datosEstudiantes.length)
+
+      if (datosAcudientes.length === 0 && datosEstudiantes.length === 0) {
+        console.log('⚠️ ADVERTENCIA: Ambas hojas están vacías')
+        return response.badRequest({
+          success: false,
+          message: 'Las hojas de acudientes y estudiantes están vacías',
+          error_type: 'EMPTY_FILES',
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      const resultados = {
+        procesados: 0,
+        acudientes: {
+          procesados: datosAcudientes.length,
+          exitosos: 0,
+          errores: [] as Array<{ fila: number, error: string, datos: any, tipo: string }>
+        },
+        estudiantes: {
+          procesados: datosEstudiantes.length,
+          exitosos: 0,
+          errores: [] as Array<{ fila: number, error: string, datos: any, tipo: string }>
+        }
+      }
+
+      // 🔄 PROCESAR ACUDIENTES
+      if (datosAcudientes.length > 0) {
+        console.log('\n=== PROCESANDO ACUDIENTES ===')
+        
+        for (let i = 0; i < datosAcudientes.length; i++) {
+          const fila = i + 2 // Excel empieza en fila 2
+          const registro = datosAcudientes[i] as any
+          resultados.procesados++
+
+          console.log(`\n📝 Procesando acudiente fila ${fila}/${datosAcudientes.length + 1}...`)
+
+          try {
+            // 🔥 MAPEAR COLUMNAS DEL EXCEL PARA ACUDIENTES
+            console.log('📋 Columnas encontradas en acudientes:', Object.keys(registro))
+            
+            const datosMapeados = {
+              acudiente_tipo_documento: registro['TIPO DOCUMENTO'] || 'CC',
+              acudiente_numero_documento: registro['NUMERO DOCUMENTO'],
+              acudiente_nombres: registro['NOMBRES'],
+              acudiente_apellidos: registro['APELLIDOS'],
+              acudiente_correo: registro['CORREO'],
+              acudiente_celular: registro['TELEFONO'],
+              acudiente_parentesco: registro['PARENTESCO'] || 'Padre',
+              acudiente_ocupacion: registro['OCUPACION'],
+              acudiente_direccion: registro['DIRECCION']
+            }
+
+            console.log('📊 Datos mapeados de acudiente:', datosMapeados)
+
+            console.log(`👤 Acudiente: ${datosMapeados.acudiente_nombres} ${datosMapeados.acudiente_apellidos}`)
+            console.log(`🆔 Documento: ${datosMapeados.acudiente_numero_documento}`)
+
+            // Validar campos requeridos
+            if (!datosMapeados.acudiente_numero_documento || !datosMapeados.acudiente_nombres || 
+                !datosMapeados.acudiente_apellidos || !datosMapeados.acudiente_celular) {
+              const error = 'Faltan campos requeridos (documento, nombres, apellidos, teléfono)'
+              console.log(`❌ ERROR VALIDACIÓN: ${error}`)
+              resultados.acudientes.errores.push({
+                fila,
+                error,
+                datos: datosMapeados,
+                tipo: 'VALIDACION_CAMPOS'
+              })
+              continue
+            }
+
+            // Verificar si el acudiente ya existe
+            const acudienteExistente = await Acudiente.query()
+              .where('numero_documento', datosMapeados.acudiente_numero_documento)
+              .first()
+
+            let acudiente: any
+
+            if (acudienteExistente) {
+              console.log('✅ Acudiente existente encontrado, actualizando...')
+              acudiente = acudienteExistente
+              acudiente.nombres = datosMapeados.acudiente_nombres
+              acudiente.apellidos = datosMapeados.acudiente_apellidos
+              acudiente.tipoDocumento = datosMapeados.acudiente_tipo_documento
+              acudiente.telefono = datosMapeados.acudiente_celular
+              acudiente.correo = datosMapeados.acudiente_correo
+              acudiente.parentesco = datosMapeados.acudiente_parentesco
+              acudiente.ocupacion = datosMapeados.acudiente_ocupacion
+              acudiente.direccion = datosMapeados.acudiente_direccion
+              await acudiente.save()
+              
+              console.log(`✅ ACUDIENTE ACTUALIZADO: ${acudiente.numeroDocumento} (${acudiente.nombres} ${acudiente.apellidos})`)
+            } else {
+              console.log('🆕 Creando nuevo acudiente...')
+              
+              // Crear usuario para el acudiente primero
+              const hash = await import('@adonisjs/core/services/hash')
+              const contrasenaTemporal = String(datosMapeados.acudiente_numero_documento).toUpperCase() // 🔥 CONTRASEÑA = DOCUMENTO EN MAYÚSCULAS
+              
+              // 🔥 VERIFICAR SI EL USUARIO YA EXISTE (buscar por teléfono)
+              const usuarioExistente = await Usuario.query()
+                .where('correo', datosMapeados.acudiente_celular) // 🔥 USAR CELULAR COMO CORREO/USUARIO
+                .first()
+
+              let usuarioAcudiente: any
+
+              if (usuarioExistente) {
+                console.log('✅ Usuario ya existe, actualizando contraseña...')
+                usuarioAcudiente = usuarioExistente
+                
+                // 🔥 ACTUALIZAR CONTRASEÑA AL NUEVO FORMATO (documento en mayúsculas)
+                console.log('📋 Documento del Excel:', datosMapeados.acudiente_numero_documento)
+                console.log('📋 Celular del Excel (usuario):', datosMapeados.acudiente_celular)
+                console.log('🔑 Nueva contraseña a generar:', contrasenaTemporal)
+                console.log('🔢 Longitud nueva contraseña:', contrasenaTemporal.length)
+                
+                usuarioAcudiente.contrasenaHash = await hash.default.make(contrasenaTemporal)
+                usuarioAcudiente.debeCambiarContrasena = true
+                await usuarioAcudiente.save()
+                
+                console.log('✅ Contraseña actualizada para:', usuarioExistente.correo)
+                console.log('🔐 Nueva contraseña:', contrasenaTemporal)
+                console.log('🔢 Longitud final:', contrasenaTemporal.length)
+              } else {
+                console.log('🆕 Creando nuevo usuario para acudiente...')
+                console.log('🔑 Contraseña temporal generada:', contrasenaTemporal)
+                
+                usuarioAcudiente = await Usuario.create({
+                  correo: datosMapeados.acudiente_celular, // 🔥 USAR CELULAR COMO CORREO/USUARIO
+                  contrasenaHash: await hash.default.make(contrasenaTemporal),
+                  rolId: 4, // Rol de acudiente
+                  estaActivo: true,
+                  debeCambiarContrasena: true
+                })
+                console.log(`✅ Usuario creado para acudiente: ${usuarioAcudiente.correo}`)
+                console.log(`🔐 Contraseña para el acudiente: ${contrasenaTemporal}`)
+              }
+
+              // Crear nuevo acudiente con usuarioId
+              acudiente = await Acudiente.create({
+                nombres: datosMapeados.acudiente_nombres,
+                apellidos: datosMapeados.acudiente_apellidos,
+                tipoDocumento: datosMapeados.acudiente_tipo_documento,
+                numeroDocumento: datosMapeados.acudiente_numero_documento,
+                telefono: datosMapeados.acudiente_celular,
+                correo: datosMapeados.acudiente_correo,
+                parentesco: datosMapeados.acudiente_parentesco,
+                ocupacion: datosMapeados.acudiente_ocupacion,
+                direccion: datosMapeados.acudiente_direccion,
+                usuarioId: usuarioAcudiente.id // 🔥 IMPORTANTE: Vincular con usuario
+              })
+
+              console.log(`🎉 ACUDIENTE CREADO: ${acudiente.numeroDocumento} (${acudiente.nombres} ${acudiente.apellidos})`)
+            }
+
+            resultados.acudientes.exitosos++
+            console.log(`✅ Acudiente de fila ${fila} procesado exitosamente`)
+
+          } catch (error) {
+            console.error(`❌ ERROR PROCESANDO ACUDIENTE FILA ${fila}:`, error.message)
+            resultados.acudientes.errores.push({
+              fila,
+              error: error.message,
+              datos: registro,
+              tipo: 'ERROR_ACUDIENTE'
+            })
+          }
+        }
+      }
+
+      // 🔄 PROCESAR ESTUDIANTES
+      if (datosEstudiantes.length > 0) {
+        console.log('\n=== PROCESANDO ESTUDIANTES ===')
+        
+        for (let i = 0; i < datosEstudiantes.length; i++) {
+          const fila = i + 2 // Excel empieza en fila 2
+          const registro = datosEstudiantes[i] as any
+          resultados.procesados++
+
+          console.log(`\n📝 Procesando estudiante fila ${fila}/${datosEstudiantes.length + 1}...`)
+
+          try {
+            // 🔥 MAPEAR COLUMNAS DEL EXCEL PARA ESTUDIANTES
+            console.log('📋 Columnas encontradas en estudiantes:', Object.keys(registro))
+            
+            const datosMapeados = {
+              // Datos básicos del estudiante
+              estudiante_tipo_documento: registro['TIPO DOCUMENTO'] || 'TI',
+              estudiante_documento: registro['NUMERO DOCUMENTO'],
+              estudiante_nombres: registro['NOMBRES'],
+              estudiante_apellidos: registro['APELLIDOS'],
+              estudiante_fecha_nacimiento: registro['FECHA DE NACIMIENTO'], // ✅ CORREGIDO: Sin guion bajo
+              estudiante_sexo: registro['SEXO'] || 'M',
+              estudiante_grado: registro['GRADO'],
+              estudiante_curso: registro['CURSO '] || registro['CURSO'], // 🔥 IMPORTANTE: "CURSO " con espacio
+              
+              // 🔥 DATOS DEL ACUDIENTE (para vinculación)
+              estudiante_documento_acudiente: registro['DOCUMENTO ACUDIENTE'],
+              estudiante_nombres_acudiente: registro['NOMBRES ACUDIENTE'],
+              
+              // Datos de contacto y ubicación
+              estudiante_direccion: registro['DIRECCION'],
+              estudiante_barrio: registro['BARRIO'],
+              estudiante_telefono: registro['TELEFONO'],
+              estudiante_correo: registro['CORREO'],
+              
+              // Datos médicos
+              estudiante_eps: registro['EPS'],
+              estudiante_tipo_sangre: registro['TIPO SANGRE'],
+              estudiante_rh: registro['RH'],
+              estudiante_discapacidad: registro['DISCAPACIDAD'],
+              estudiante_medicamentos: registro['MEDICAMENTOS'],
+              estudiante_alergias: registro['ALERGIAS'],
+              estudiante_enfermedades: registro['ENFERMEDADES']
+            }
+
+            console.log('📊 Datos mapeados de estudiante:', datosMapeados)
+
+            console.log(`👨‍🎓 Estudiante: ${datosMapeados.estudiante_nombres} ${datosMapeados.estudiante_apellidos}`)
+            console.log(`🆔 Documento: ${datosMapeados.estudiante_documento}`)
+            console.log(`📚 Curso: ${datosMapeados.estudiante_curso}`)
+
+            // Validar campos requeridos
+            if (!datosMapeados.estudiante_documento || !datosMapeados.estudiante_nombres || 
+                !datosMapeados.estudiante_apellidos || !datosMapeados.estudiante_curso) {
+              const error = 'Faltan campos requeridos (documento, nombres, apellidos, curso)'
+              console.log(`❌ ERROR VALIDACIÓN: ${error}`)
+              resultados.estudiantes.errores.push({
+                fila,
+                error,
+                datos: datosMapeados,
+                tipo: 'VALIDACION_CAMPOS'
+              })
+              continue
+            }
+
+            // Verificar si el estudiante ya existe
+            const estudianteExistente = await Estudiante.query()
+              .where('numero_documento', datosMapeados.estudiante_documento)
+              .first()
+
+            let estudiante: any
+
+            if (estudianteExistente) {
+              console.log('✅ Estudiante existente encontrado, actualizando...')
+              
+              // 🔥 BUSCAR CURSO ANTES DE ACTUALIZAR (igual que para nuevos)
+              if (!datosMapeados.estudiante_curso) {
+                throw new Error('El estudiante requiere un curso válido')
+              }
+
+              console.log(`🔍 Buscando curso para actualización: ${datosMapeados.estudiante_curso}`)
+
+              // 🔥 BUSCAR CURSO POR VÍAS MÚLTIPLES
+              let curso = null
+
+              // 1. Intentar como ID numérico
+              if (!isNaN(Number(datosMapeados.estudiante_curso))) {
+                curso = await db.from('cursos')
+                  .where('id', Number(datosMapeados.estudiante_curso))
+                  .first()
+                
+                if (curso) {
+                  console.log(`✅ Curso encontrado por ID: ${curso.nombre} (ID: ${curso.id})`)
+                }
+              }
+
+              // 2. Si no encontró por ID, buscar por nombre o código
+              if (!curso) {
+                curso = await db.from('cursos')
+                  .where('nombre', datosMapeados.estudiante_curso)
+                  .orWhereRaw('LOWER(nombre) = ?', [datosMapeados.estudiante_curso.toLowerCase()])
+                  .orWhereRaw('LOWER(nombre) LIKE ?', [`%${datosMapeados.estudiante_curso.toLowerCase()}%`])
+                  .first()
+                
+                if (curso) {
+                  console.log(`✅ Curso encontrado por nombre: ${curso.nombre} (ID: ${curso.id})`)
+                }
+              }
+
+              // 3. Si aún no encuentra, buscar en otros campos
+              if (!curso) {
+                curso = await db.from('cursos')
+                  .whereRaw('LOWER(jornada) = ?', [datosMapeados.estudiante_curso.toLowerCase()])
+                  .orWhereRaw('LOWER(grado) = ?', [datosMapeados.estudiante_curso.toLowerCase()])
+                  .first()
+                
+                if (curso) {
+                  console.log(`✅ Curso encontrado por otros campos: ${curso.nombre} (ID: ${curso.id})`)
+                }
+              }
+
+              if (!curso) {
+                throw new Error(`No se encontró ningún curso con: "${datosMapeados.estudiante_curso}". Por favor, verifica el código del curso.`)
+              }
+
+              // Ahora actualizar con el ID correcto del curso
+              estudiante = estudianteExistente
+              estudiante.nombres = datosMapeados.estudiante_nombres
+              estudiante.apellidos = datosMapeados.estudiante_apellidos
+              estudiante.tipoDocumento = datosMapeados.estudiante_tipo_documento
+              estudiante.cursoId = curso.id // 🔥 IMPORTANTE: Usar ID del curso encontrado
+              estudiante.fechaNacimiento = datosMapeados.estudiante_fecha_nacimiento ? 
+                DateTime.fromJSDate(new Date(datosMapeados.estudiante_fecha_nacimiento)) : estudiante.fechaNacimiento
+              estudiante.sexo = datosMapeados.estudiante_sexo
+              estudiante.eps = datosMapeados.estudiante_eps
+              estudiante.grupoSanguineo = datosMapeados.estudiante_tipo_sangre
+              estudiante.rh = datosMapeados.estudiante_rh
+              await estudiante.save()
+              
+              console.log(`✅ ESTUDIANTE ACTUALIZADO: ${estudiante.numeroDocumento} (${estudiante.nombres} ${estudiante.apellidos})`)
+            } else {
+              console.log('🆕 Creando nuevo estudiante...')
+              
+              // Validar que exista el curso (aceptando cualquier formato: ID, código, nombre)
+              if (!datosMapeados.estudiante_curso) {
+                throw new Error('El estudiante requiere un curso válido')
+              }
+
+              console.log(`🔍 Buscando curso con código/nombre/ID: ${datosMapeados.estudiante_curso}`)
+
+              // 🔥 BUSCAR CURSO POR VÍAS MÚLTIPLES
+              let curso = null
+
+              // 1. Intentar como ID numérico
+              if (!isNaN(Number(datosMapeados.estudiante_curso))) {
+                curso = await db.from('cursos')
+                  .where('id', Number(datosMapeados.estudiante_curso))
+                  .first()
+                
+                if (curso) {
+                  console.log(`✅ Curso encontrado por ID: ${curso.nombre} (ID: ${curso.id})`)
+                }
+              }
+
+              // 2. Si no encontró por ID, buscar por nombre o código
+              if (!curso) {
+                curso = await db.from('cursos')
+                  .where('nombre', datosMapeados.estudiante_curso)
+                  .orWhereRaw('LOWER(nombre) = ?', [datosMapeados.estudiante_curso.toLowerCase()])
+                  .orWhereRaw('LOWER(nombre) LIKE ?', [`%${datosMapeados.estudiante_curso.toLowerCase()}%`])
+                  .first()
+                
+                if (curso) {
+                  console.log(`✅ Curso encontrado por nombre: ${curso.nombre} (ID: ${curso.id})`)
+                }
+              }
+
+              // 3. Si aún no encuentra, buscar en otros campos
+              if (!curso) {
+                curso = await db.from('cursos')
+                  .whereRaw('LOWER(jornada) = ?', [datosMapeados.estudiante_curso.toLowerCase()])
+                  .orWhereRaw('LOWER(grado) = ?', [datosMapeados.estudiante_curso.toLowerCase()])
+                  .first()
+                
+                if (curso) {
+                  console.log(`✅ Curso encontrado por otros campos: ${curso.nombre} (ID: ${curso.id})`)
+                }
+              }
+
+              if (!curso) {
+                throw new Error(`No se encontró ningún curso con: "${datosMapeados.estudiante_curso}". Por favor, verifica el código del curso.`)
+              }
+
+              // Crear nuevo estudiante
+              estudiante = await Estudiante.create({
+                nombres: datosMapeados.estudiante_nombres,
+                apellidos: datosMapeados.estudiante_apellidos,
+                tipoDocumento: datosMapeados.estudiante_tipo_documento,
+                numeroDocumento: datosMapeados.estudiante_documento,
+                cursoId: curso.id, // 🔥 IMPORTANTE: Usar el ID del curso encontrado
+                fechaNacimiento: datosMapeados.estudiante_fecha_nacimiento ? 
+                  DateTime.fromJSDate(new Date(datosMapeados.estudiante_fecha_nacimiento)) : undefined,
+                sexo: datosMapeados.estudiante_sexo,
+                eps: datosMapeados.estudiante_eps,
+                grupoSanguineo: datosMapeados.estudiante_tipo_sangre,
+                rh: datosMapeados.estudiante_rh
+              })
+
+              console.log(`🎉 ESTUDIANTE CREADO: ${estudiante.numeroDocumento} (${estudiante.nombres} ${estudiante.apellidos}) en curso ${curso.nombre}`)
+            }
+
+            // 🔥 VINCULAR ACUDIENTE CON ESTUDIANTE (tabla pivot)
+            try {
+              // Buscar el acudiente por el documento del estudiante
+              const acudienteAsociado = await Acudiente.query()
+                .where('numero_documento', datosMapeados.estudiante_documento_acudiente)
+                .first()
+
+              if (acudienteAsociado) {
+                // Verificar si ya existe el vínculo
+                const vinculoExistente = await db.from('estudiante_acudiente')
+                  .where('estudiante_id', estudiante.id)
+                  .where('acudiente_id', acudienteAsociado.id)
+                  .first()
+
+                if (!vinculoExistente) {
+                  // Crear el vínculo
+                  await db.table('estudiante_acudiente').insert({
+                    estudiante_id: estudiante.id,
+                    acudiente_id: acudienteAsociado.id,
+                    relacion: datosMapeados.estudiante_nombres_acudiente || 'ACUDIENTE' // 🔥 AGREGAR RELACIÓN
+                  })
+                  console.log(`🔗 VÍNCULO CREADO: Estudiante ${estudiante.numeroDocumento} ↔ Acudiente ${acudienteAsociado.numeroDocumento}`)
+                } else {
+                  console.log(`🔗 VÍNCULO YA EXISTE: Estudiante ${estudiante.numeroDocumento} ↔ Acudiente ${acudienteAsociado.numeroDocumento}`)
+                }
+              } else {
+                console.log(`⚠️ No se encontró acudiente con documento: ${datosMapeados.estudiante_documento_acudiente}`)
+              }
+            } catch (error) {
+              console.log(`⚠️ Error al vincular acudiente-estudiante:`, error.message)
+            }
+
+            resultados.estudiantes.exitosos++
+            console.log(`✅ Estudiante de fila ${fila} procesado exitosamente`)
+
+          } catch (error) {
+            console.error(`❌ ERROR PROCESANDO ESTUDIANTE FILA ${fila}:`, error.message)
+            resultados.estudiantes.errores.push({
+              fila,
+              error: error.message,
+              datos: registro,
+              tipo: 'ERROR_ESTUDIANTE'
+            })
+          }
+        }
+      }
+
+      // Limpiar archivo temporal
+      try {
+        await import('fs').then(fs => fs.promises.unlink(filePath))
+        console.log('🗑️ Archivo temporal eliminado')
+      } catch (error) {
+        console.log('⚠️ No se pudo eliminar archivo temporal:', error.message)
+      }
+
+      // 🎯 RESUMEN FINAL COMBINADO
+      const totalExitosos = resultados.acudientes.exitosos + resultados.estudiantes.exitosos
+      const totalErrores = resultados.acudientes.errores.length + resultados.estudiantes.errores.length
+
+      console.log('\n=== 📊 RESUMEN FINAL CARGA MASIVA COMBINADA ===')
+      console.log(`🕐 Hora de finalización:`, new Date().toISOString())
+      console.log(`📊 Hojas procesadas: ${hojaAcudientes} (acudientes), ${hojaEstudiantes} (estudiantes)`)
+      console.log(`👤 Acudientes procesados: ${resultados.acudientes.procesados}`)
+      console.log(`👤 Acudientes exitosos:`, resultados.acudientes.exitosos)
+      console.log(`👨‍🎓 Estudiantes procesados: ${resultados.estudiantes.procesados}`)
+      console.log(`👨‍🎓 Estudiantes exitosos:`, resultados.estudiantes.exitosos)
+      console.log(`❌ Errores de acudientes:`, resultados.acudientes.errores.length)
+      console.log(`❌ Errores de estudiantes:`, resultados.estudiantes.errores.length)
+      console.log(`📈 Tasa de éxito general:`, `${((totalExitosos / (resultados.acudientes.procesados + resultados.estudiantes.procesados)) * 100).toFixed(2)}%`)
+
+      if (totalErrores > 0) {
+        console.log('\n🔍 DETALLE DE ERRORES:')
+        if (resultados.acudientes.errores.length > 0) {
+          console.log('❌ Errores de Acudientes:')
+          resultados.acudientes.errores.forEach((error, index) => {
+            console.log(`  ${index + 1}. Fila ${error.fila}: ${error.tipo} - ${error.error}`)
+          })
+        }
+        if (resultados.estudiantes.errores.length > 0) {
+          console.log('❌ Errores de Estudiantes:')
+          resultados.estudiantes.errores.forEach((error, index) => {
+            console.log(`  ${index + 1}. Fila ${error.fila}: ${error.tipo} - ${error.error}`)
+          })
+        }
+      }
+
+      console.log('=== 🏁 FIN CARGA MASIVA COMBINADA ===\n')
+
+      // 📤 RESPUESTA ENRIQUECIDA COMBINADA
+      const respuestaFinal = {
+        success: totalExitosos > 0,
+        message: totalExitosos > 0 
+          ? `Carga masiva combinada completada: ${resultados.acudientes.exitosos} acudientes y ${resultados.estudiantes.exitosos} estudiantes procesados exitosamente`
+          : 'No se pudo procesar ningún registro correctamente',
+        data: {
+          hojas_procesadas: {
+            acudientes: hojaAcudientes,
+            estudiantes: hojaEstudiantes
+          },
+          acudientes: {
+            procesados: resultados.acudientes.procesados,
+            exitosos: resultados.acudientes.exitosos,
+            errores: resultados.acudientes.errores.length
+          },
+          estudiantes: {
+            procesados: resultados.estudiantes.procesados,
+            exitosos: resultados.estudiantes.exitosos,
+            errores: resultados.estudiantes.errores.length
+          },
+          total_exitosos: totalExitosos,
+          total_errores: totalErrores,
+          tasa_exito_general: ((totalExitosos / (resultados.acudientes.procesados + resultados.estudiantes.procesados)) * 100).toFixed(2),
+          errores_detalle: {
+            acudientes: resultados.acudientes.errores,
+            estudiantes: resultados.estudiantes.errores
+          },
+          timestamp_inicio: new Date().toISOString()
+        },
+        frontend_notifications: {
+          success: totalExitosos > 0 ? {
+            title: '¡Carga Masiva Exitosa!',
+            message: `${resultados.acudientes.exitosos} acudientes y ${resultados.estudiantes.exitosos} estudiantes procesados correctamente`,
+            type: 'success',
+            duration: 6000
+          } : null,
+          error: totalErrores > 0 ? {
+            title: 'Errores Detectados',
+            message: `${totalErrores} registros no pudieron ser procesados`,
+            type: 'warning',
+            duration: 10000
+          } : null,
+          info: {
+            title: 'Proceso Completado',
+            message: `Hojas procesadas: ${hojaAcudientes} y ${hojaEstudiantes}`,
+            type: 'info',
+            duration: 4000
+          }
+        }
+      }
+
+      return response.ok(respuestaFinal)
+
+    } catch (error) {
+      console.error('❌ ERROR GENERAL EN CARGA MASIVA COMPLETA:', error)
+      console.log('=== 🚨 ERROR CRÍTICO ===')
+      console.log('🕐 Hora del error:', new Date().toISOString())
+      console.log('📄 Error:', error.message)
+      console.log('📍 Stack trace:', error.stack)
+      console.log('=== 🚨 FIN ERROR CRÍTICO ===\n')
+
+      return response.internalServerError({
+        success: false,
+        message: 'Error crítico en la carga masiva combinada',
+        error: error.message,
+        error_type: 'CRITICAL_ERROR',
+        timestamp: new Date().toISOString(),
+        frontend_notifications: {
+          error: {
+            title: 'Error Crítico',
+            message: 'Ocurrió un error inesperado. Por favor, contacta al administrador.',
+            type: 'error',
+            duration: 10000
+          }
+        }
+      })
+    }
+  }
+
   async destroy({ params, response }: HttpContext) {
     const ctxAny = arguments[0] as any
     const usuario = (ctxAny as any).jwtUser as Usuario | undefined

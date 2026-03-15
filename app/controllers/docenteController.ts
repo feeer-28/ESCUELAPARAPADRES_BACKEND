@@ -1,115 +1,89 @@
-
 import type { HttpContext } from '@adonisjs/core/http'
-import app from '@adonisjs/core/services/app'
-import hash from '@adonisjs/core/services/hash'
-import db from '@adonisjs/lucid/services/db'
-import jwt from 'jsonwebtoken'
-
-import Acudiente from '#models/acudiente'
-import Curso from '#models/curso'
 import Docente from '#models/docente'
-import Estudiante from '#models/estudiante'
+import Usuario from '#models/usuario'
 import Funcionario from '#models/funcionario'
 import Role from '#models/role'
-import Usuario from '#models/usuario'
-import env from '#start/env'
+import Curso from '#models/curso'
+import db from '@adonisjs/lucid/services/db'
 
 export default class DocenteController {
-  private async getDocenteCursoIds(usuario: Usuario): Promise<number[] | null> {
-    const rol = await Role.find(usuario.rolId)
-    const nombreRol = (rol?.nombre ?? '').toLowerCase()
-    if (nombreRol === 'orientador') {
-      // Orientador: acceso sin restricción a rutas de docente
-      return null
-    }
-    if (nombreRol !== 'docente') {
-      // Cualquier otro rol: sin acceso (listas vacías / bloqueos)
-      return []
-    }
-
-    const docente = await Docente.query().where('usuario_id', usuario.id).first()
-    if (!docente) {
-      return []
-    }
-
-    const rows = await db.from('docente_curso').where('docente_id', docente.id).select('curso_id')
-    const cursoIds = rows.map((r) => Number(r.curso_id)).filter((id) => !Number.isNaN(id))
-    return [...new Set(cursoIds)]
-  }
-
-  private async docentePuedeAccederAcudiente(usuario: Usuario, acudienteId: number): Promise<boolean> {
-    const cursoIds = await this.getDocenteCursoIds(usuario)
-    if (!Array.isArray(cursoIds)) {
-      return true
-    }
-
-    if (!cursoIds.length) {
-      return false
-    }
-
-    const row = await db
-      .from('estudiante_acudiente as ea')
-      .join('estudiantes', 'ea.estudiante_id', 'estudiantes.id')
-      .where('ea.acudiente_id', acudienteId)
-      .whereIn('estudiantes.curso_id', cursoIds)
-      .first()
-
-    return Boolean(row)
-  }
+  /**
+   * Login de docente
+   */
   async login({ request, response }: HttpContext) {
-    const correo = String(request.input('correo') ?? '').trim()
-    const contrasena = String(request.input('contrasena') ?? '').trim()
+    const { correo, contrasena } = request.only(['correo', 'contrasena'])
 
     if (!correo || !contrasena) {
-      return response.badRequest({ message: 'correo y contrasena son requeridos' })
+      return response.badRequest({
+        success: false,
+        message: 'Correo y contraseña son requeridos'
+      })
     }
 
-    const usuario = await Usuario.query().where('correo', correo).first()
-    if (!usuario) {
-      return response.unauthorized({ message: 'Usuario no existe' })
+    try {
+      const usuario = await Usuario.verifyCredentials(correo, contrasena)
+
+      if (!usuario.estaActivo) {
+        return response.unauthorized({
+          success: false,
+          message: 'Usuario inactivo'
+        })
+      }
+
+      // 🔥 Buscar información del docente para obtener institucionId
+      let institucionId = null
+      let docenteInfo = null
+
+      if (usuario.rolId === 5) { // Si es docente
+        docenteInfo = await Docente.query()
+          .where('usuario_id', usuario.id)
+          .first()
+        
+        if (docenteInfo) {
+          institucionId = docenteInfo.institucionId
+        }
+      }
+
+      const accessToken = await Usuario.accessTokens.create(usuario, {
+        expiresIn: '7d'
+      })
+
+      return response.ok({
+        message: 'Login exitoso',
+        authorization: `Bearer ${accessToken}`,
+        access_token: accessToken,
+        token_type: 'Bearer',
+        usuario: {
+          id: usuario.id,
+          correo: usuario.correo,
+          rolId: usuario.rolId,
+          debeCambiarContrasena: usuario.debeCambiarContrasena,
+          institucionId: institucionId, // 🔥 Agregar institucionId
+          docente: docenteInfo ? {
+            id: docenteInfo.id,
+            nombres: docenteInfo.nombres,
+            apellidos: docenteInfo.apellidos
+          } : null
+        },
+      })
+    } catch (error) {
+      return response.unauthorized({
+        success: false,
+        message: 'Credenciales inválidas'
+      })
     }
-
-    const ok = await hash.verify(usuario.contrasenaHash, contrasena)
-    if (!ok) {
-      const debug = app.inProduction
-        ? undefined
-        : {
-            hashLength: usuario.contrasenaHash?.length,
-            hashPrefix: usuario.contrasenaHash?.slice(0, 25),
-          }
-
-      return response.unauthorized({ message: 'Credenciales inválidas', debug })
-    }
-
-    const secret = env.get('JWT_SECRET', env.get('APP_KEY'))
-    const accessToken = jwt.sign(
-      {
-        sub: usuario.id,
-        correo: usuario.correo,
-        rolId: usuario.rolId,
-      },
-      secret,
-      { expiresIn: '7d' }
-    )
-
-    return response.ok({
-      message: 'Login exitoso',
-      authorization: `Bearer ${accessToken}`,
-      access_token: accessToken,
-      token_type: 'Bearer',
-      usuario: {
-        id: usuario.id,
-        correo: usuario.correo,
-        rolId: usuario.rolId,
-        debeCambiarContrasena: usuario.debeCambiarContrasena,
-      },
-    })
   }
 
+  /**
+   * Logout de docente
+   */
   async logout({ response }: HttpContext) {
     return response.ok({ message: 'Logout exitoso' })
   }
 
+  /**
+   * Listar todos los docentes
+   */
   async index({ response, auth }: HttpContext) {
     const usuario = auth.user
     let institucionId: number | null = null
@@ -117,7 +91,7 @@ export default class DocenteController {
     if (usuario) {
       const rol = await Role.find(usuario.rolId)
       const nombreRol = (rol?.nombre ?? '').toLowerCase()
-      
+
       if (nombreRol === 'orientador') {
         const func = await Funcionario.query().where('usuario_id', usuario.id).first()
         institucionId = func?.institucionId ?? null
@@ -127,17 +101,59 @@ export default class DocenteController {
       }
     }
 
-    let query = Docente.query().orderBy('id', 'desc')
+    let query = Docente.query().preload('usuario').orderBy('id', 'desc')
+
     if (institucionId) {
       query = query.where('institucion_id', institucionId)
     }
 
     const docentes = await query
-    return response.ok(docentes)
+
+    const docentesConInfo = await Promise.all(
+      docentes.map(async (docente) => {
+        const cursosAsignados = await db
+          .from('docente_curso as dc')
+          .join('cursos as c', 'dc.curso_id', 'c.id')
+          .where('dc.docente_id', docente.id)
+          .select('c.id', 'c.nombre', 'dc.es_director')
+          .orderBy('c.nombre')
+
+        const estado = docente.usuario?.estaActivo ? 'Activo' : 'Inactivo'
+
+        return {
+          id: docente.id,
+          nombre: docente.nombres,
+          apellido: docente.apellidos,
+          nombres: docente.nombres,
+          apellidos: docente.apellidos,
+          correo: docente.usuario?.correo || docente.correo || 'Sin correo',
+          telefono: docente.telefono,
+          cursos: cursosAsignados,
+          cantidadCursos: cursosAsignados.length,
+          estado,
+          esDirector: cursosAsignados.some((c: any) => c.es_director),
+          docenteInstitucionId: docente.institucionId,
+          userInstitucionId: institucionId,
+          pasa: docente.institucionId === institucionId,
+          Docente: `${docente.nombres} ${docente.apellidos}`,
+          Correo: docente.usuario?.correo || docente.correo || 'Sin correo',
+          Teléfono: docente.telefono,
+          Cursos: cursosAsignados.map((c: any) => c.nombre).join(', ') || 'Sin cursos',
+          Estado: estado,
+          Acciones: ''
+        }
+      })
+    )
+
+    return response.ok(docentesConInfo)
   }
 
+  /**
+   * Mostrar un docente específico
+   */
   async show({ params, response }: HttpContext) {
     const docente = await Docente.find(params.id)
+
     if (!docente) {
       return response.notFound({ message: 'Docente no encontrado' })
     }
@@ -145,16 +161,28 @@ export default class DocenteController {
     return response.ok(docente)
   }
 
-  async store({ request, response }: HttpContext) {
+  /**
+   * Crear un nuevo docente (Orientador o Admin)
+   */
+  async store(ctx: HttpContext) {
+    console.log('=== DEBUG CREAR DOCENTE POR ORIENTADOR ===')
+    
+    const jwtUser = (ctx as any).jwtUser || ctx.auth?.user
+    
+    if (!jwtUser) {
+      return ctx.response.unauthorized({
+        success: false,
+        message: 'No autenticado'
+      })
+    }
+
+    const request = ctx.request
+    const response = ctx.response
+
     const correo = String(request.input('correo') ?? '').trim()
     const contrasena = String(request.input('contrasena') ?? '').trim()
     const telefono = String(request.input('telefono') ?? '').trim()
     const numeroDocumento = String(request.input('numeroDocumento') ?? request.input('numero_documento') ?? '').trim()
-
-    const cursoIds = request.input('cursoIds') ?? request.input('curso_ids')
-    if (cursoIds !== undefined && !Array.isArray(cursoIds)) {
-      return response.badRequest({ message: 'cursoIds debe ser un arreglo de ids' })
-    }
 
     if (!correo || !telefono || !numeroDocumento) {
       return response.badRequest({ message: 'correo, telefono y numeroDocumento son requeridos' })
@@ -165,40 +193,45 @@ export default class DocenteController {
     const passwordFinal = contrasena || passwordTemporal
     const usaPasswordTemporal = !contrasena
 
-    if (Array.isArray(cursoIds) && cursoIds.length) {
-      const cursos = await Curso.query().whereIn('id', cursoIds)
-      if (cursos.length !== cursoIds.length) {
-        return response.badRequest({ message: 'Uno o más cursoIds no existen' })
+    // Obtener institución del orientador o admin
+    let institucionId: number | null = null
+    let institucionNombre: string = 'No asignada'
+    let creadorNombre: string = 'Desconocido'
+
+    try {
+      const rol = await Role.find(jwtUser.rolId)
+      
+      if (rol?.id === 1) {
+        // Admin sistema
+        institucionId = request.input('institucionId') ?? request.input('institucion_id') ?? null
+        institucionNombre = institucionId ? 'Asignada por admin' : 'Sin asignar'
+        creadorNombre = 'Admin Sistema'
+      } else {
+        // Orientador - usar su institución
+        const funcionario = await Funcionario.query()
+          .where('usuario_id', jwtUser.id)
+          .preload('institucion')
+          .first()
+
+        if (!funcionario || !funcionario.institucionId) {
+          return response.badRequest({
+            success: false,
+            message: 'El orientador no tiene una institución asignada'
+          })
+        }
+
+        institucionId = funcionario.institucionId
+        institucionNombre = funcionario.institucion?.nombre || 'Sin nombre'
+        creadorNombre = `${funcionario.nombre} ${funcionario.apellido}`
       }
+    } catch (error) {
+      return response.internalServerError({
+        success: false,
+        message: 'Error al obtener la institución del creador'
+      })
     }
 
-    const docenteExistentePorDocumento = await Docente.query().where('numero_documento', numeroDocumento).first()
-    if (docenteExistentePorDocumento) {
-      return response.conflict({ message: 'Este usuario ya existe: el numero de documento ya está registrado' })
-    }
-
-    const docenteExistentePorTelefono = await Docente.query().where('telefono', telefono).first()
-    if (docenteExistentePorTelefono) {
-      return response.conflict({ message: 'Este usuario ya existe: el telefono ya está registrado' })
-    }
-
-    const docenteExistentePorCorreo = await Docente.query().where('correo', correo).first()
-    if (docenteExistentePorCorreo) {
-      return response.conflict({ message: 'Este usuario ya existe: el correo ya está registrado' })
-    }
-
-    const rolDocente = await Role.query().whereILike('nombre', 'docente').first()
-    if (!rolDocente) {
-      return response.badRequest({ message: 'No existe el rol docente' })
-    }
-
-    const usuarioExistente = await Usuario.query().where('correo', correo).first()
-    if (usuarioExistente) {
-      return response.conflict({ message: 'Este usuario ya existe: el correo ya está registrado' })
-    }
-
-    // Validar que exista rector en la institución antes de crear docente
-    const institucionId = request.input('institucionId') ?? request.input('institucion_id')
+    // Validar que exista rector en la institución
     if (institucionId) {
       const tieneRector = await Funcionario.query()
         .where('institucion_id', institucionId)
@@ -219,8 +252,8 @@ export default class DocenteController {
           correo,
           contrasenaHash: passwordFinal,
           estaActivo: true,
-          debeCambiarContrasena: usaPasswordTemporal, // Solo si usa temporal
-          rolId: rolDocente.id,
+          debeCambiarContrasena: usaPasswordTemporal,
+          rolId: 5, // Rol docente
         },
         { client: trx }
       )
@@ -239,29 +272,39 @@ export default class DocenteController {
         gradoAsignado: request.input('gradoAsignado') ?? request.input('grado_asignado'),
         areaQueOrienta: request.input('areaQueOrienta') ?? request.input('area_que_orienta'),
         centroInteres: request.input('centroInteres') ?? request.input('centro_interes'),
-        institucionId: request.input('institucionId') ?? request.input('institucion_id'),
+        institucionId: institucionId,
         usuarioId: usuario.id,
       }
 
       const docente = await Docente.create(payload, { client: trx })
-
-      if (Array.isArray(cursoIds) && cursoIds.length) {
-        await docente.related('cursos').attach(cursoIds, trx)
-      }
-
       return { docente, usuario }
     })
 
     return response.created({
-      docente: result.docente,
-      usuario: { id: result.usuario.id, correo: result.usuario.correo },
-      passwordTemporal: usaPasswordTemporal ? passwordFinal : undefined,
-      debeCambiarContrasena: usaPasswordTemporal,
+      success: true,
+      message: usaPasswordTemporal 
+        ? 'Docente registrado. Credenciales temporales generadas.' 
+        : 'Docente registrado con contraseña personalizada.',
+      data: {
+        docente: result.docente,
+        usuario: { id: result.usuario.id, correo: result.usuario.correo },
+        passwordTemporal: usaPasswordTemporal ? passwordFinal : undefined,
+        debeCambiarContrasena: usaPasswordTemporal,
+        institucion: {
+          id: institucionId,
+          nombre: institucionNombre
+        },
+        creadoPor: creadorNombre
+      }
     })
   }
 
+  /**
+   * Actualizar un docente
+   */
   async update({ params, request, response }: HttpContext) {
     const docente = await Docente.find(params.id)
+
     if (!docente) {
       return response.notFound({ message: 'Docente no encontrado' })
     }
@@ -286,217 +329,24 @@ export default class DocenteController {
     docente.merge(payload)
     await docente.save()
 
-    return response.ok(docente)
+    return response.ok({
+      message: 'Docente actualizado correctamente',
+      docente
+    })
   }
 
+  /**
+   * Eliminar un docente
+   */
   async destroy({ params, response }: HttpContext) {
     const docente = await Docente.find(params.id)
+
     if (!docente) {
       return response.notFound({ message: 'Docente no encontrado' })
     }
 
     await docente.delete()
+
     return response.ok({ message: 'Docente eliminado' })
-  }
-
-  // ========================================
-  // GESTIÓN DE ESTUDIANTES (EDICIÓN LIMITADA)
-  // ========================================
-
-  /**
-   * Listar estudiantes de los cursos del docente
-   * GET /docentes/estudiantes
-   */
-  async listarEstudiantes({ response }: HttpContext) {
-    const ctxAny = arguments[0] as any
-    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
-
-    const cursoIds = usuario ? await this.getDocenteCursoIds(usuario) : null
-
-    const query = Estudiante.query().orderBy('id', 'desc')
-    if (Array.isArray(cursoIds)) {
-      if (!cursoIds.length) {
-        return response.ok([])
-      }
-      query.whereIn('curso_id', cursoIds)
-    }
-
-    const estudiantes = await query
-    return response.ok(estudiantes)
-  }
-
-  /**
-   * Ver un estudiante específico (solo si pertenece a sus cursos)
-   * GET /docentes/estudiantes/:id
-   */
-  async verEstudiante({ params, response }: HttpContext) {
-    const ctxAny = arguments[0] as any
-    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
-
-    const estudiante = await Estudiante.find(params.id)
-    if (!estudiante) {
-      return response.notFound({ message: 'Estudiante no encontrado' })
-    }
-
-    if (usuario) {
-      const cursoIds = await this.getDocenteCursoIds(usuario)
-      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
-        return response.forbidden({ message: 'Acceso denegado' })
-      }
-    }
-
-    return response.ok(estudiante)
-  }
-
-  /**
-   * Editar información de un estudiante (solo si pertenece a sus cursos)
-   * PUT /docentes/estudiantes/:id
-   */
-  async editarEstudiante({ params, request, response }: HttpContext) {
-    const ctxAny = arguments[0] as any
-    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
-
-    const estudiante = await Estudiante.find(params.id)
-    if (!estudiante) {
-      return response.notFound({ message: 'Estudiante no encontrado' })
-    }
-
-    if (usuario) {
-      const cursoIds = await this.getDocenteCursoIds(usuario)
-      if (Array.isArray(cursoIds) && !cursoIds.includes(estudiante.cursoId)) {
-        return response.forbidden({ message: 'Acceso denegado: este estudiante no pertenece a tus cursos' })
-      }
-    }
-
-    const payload = request.only([
-      'nombres',
-      'apellidos',
-      'tipoDocumento',
-      'numeroDocumento',
-      'fechaNacimiento',
-      'sexo',
-      'grupoSanguineo',
-      'rh',
-      'paisNacimiento',
-      'ciudadNacimiento',
-      'estrato',
-      'etnia',
-      'eps',
-    ])
-
-    estudiante.merge(payload)
-    await estudiante.save()
-
-    return response.ok({
-      message: 'Estudiante actualizado correctamente',
-      estudiante
-    })
-  }
-
-  // ========================================
-  // GESTIÓN DE ACUDIENTES (EDICIÓN LIMITADA)
-  // ========================================
-
-  /**
-   * Listar acudientes de los estudiantes de los cursos del docente
-   * GET /docentes/acudientes
-   */
-  async listarAcudientes({ response }: HttpContext) {
-    const ctxAny = arguments[0] as any
-    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
-
-    if (!usuario) {
-      const acudientes = await Acudiente.query().orderBy('id', 'desc')
-      return response.ok(acudientes)
-    }
-
-    const cursoIds = await this.getDocenteCursoIds(usuario)
-    if (Array.isArray(cursoIds)) {
-      if (!cursoIds.length) {
-        return response.ok([])
-      }
-
-      const acudientes = await db
-        .from('acudientes')
-        .join('estudiante_acudiente as ea', 'acudientes.id', 'ea.acudiente_id')
-        .join('estudiantes', 'ea.estudiante_id', 'estudiantes.id')
-        .whereIn('estudiantes.curso_id', cursoIds)
-        .distinct('acudientes.*')
-        .orderBy('acudientes.id', 'desc')
-
-      return response.ok(acudientes)
-    }
-
-    const acudientes = await Acudiente.query().orderBy('id', 'desc')
-    return response.ok(acudientes)
-  }
-
-  /**
-   * Ver un acudiente específico (solo si está relacionado con estudiantes de sus cursos)
-   * GET /docentes/acudientes/:id
-   */
-  async verAcudiente({ params, response }: HttpContext) {
-    const ctxAny = arguments[0] as any
-    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
-
-    if (usuario) {
-      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
-      if (!ok) {
-        return response.forbidden({ message: 'Acceso denegado: este acudiente no está relacionado con tus estudiantes' })
-      }
-    }
-
-    const acudiente = await Acudiente.find(params.id)
-    if (!acudiente) {
-      return response.notFound({ message: 'Acudiente no encontrado' })
-    }
-
-    return response.ok(acudiente)
-  }
-
-  /**
-   * Editar información de un acudiente (solo si está relacionado con estudiantes de sus cursos)
-   * PUT /docentes/acudientes/:id
-   */
-  async editarAcudiente({ params, request, response }: HttpContext) {
-    const ctxAny = arguments[0] as any
-    const usuario = (ctxAny as any).jwtUser as Usuario | undefined
-
-    if (usuario) {
-      const ok = await this.docentePuedeAccederAcudiente(usuario, Number(params.id))
-      if (!ok) {
-        return response.forbidden({ message: 'Acceso denegado: este acudiente no está relacionado con tus estudiantes' })
-      }
-    }
-
-    const acudiente = await Acudiente.find(params.id)
-    if (!acudiente) {
-      return response.notFound({ message: 'Acudiente no encontrado' })
-    }
-
-    const payload = request.only([
-      'nombres',
-      'apellidos',
-      'tipoDocumento',
-      'numeroDocumento',
-      'telefono',
-      'telefonoAlternativo',
-      'correo',
-      'direccion',
-      'parentesco',
-      'ocupacion',
-      'tipoTrabajo',
-      'nivelEducativo',
-      'aportaEconomia',
-      'horarioTrabajo',
-    ])
-
-    acudiente.merge(payload)
-    await acudiente.save()
-
-    return response.ok({
-      message: 'Acudiente actualizado correctamente',
-      acudiente
-    })
   }
 }

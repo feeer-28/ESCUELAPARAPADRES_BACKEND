@@ -3,8 +3,8 @@ import { middleware } from '#start/kernel'
 import PeriodoController from '#controllers/periodoController'
 
 // Rutas públicas (solo lectura)
-router.get('/periodos', [PeriodoController, 'index'])
-router.get('/periodos/:id', [PeriodoController, 'show'])
+router.get('/periodos', [PeriodoController, 'index']).use(middleware.jwt()) // 🔥 Agregar JWT
+router.get('/periodos/:id', [PeriodoController, 'show']).use(middleware.jwt()) // 🔥 Agregar JWT
 
 // Rutas protegidas - Solo Admin Sistema
 router.post('/periodos', [PeriodoController, 'store'])

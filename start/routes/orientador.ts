@@ -17,13 +17,18 @@ router
   .use(middleware.jwt())
 router.get('/orientadores/estudiantes', [OrientadorController, 'listarEstudiantesInstitucion']).use(middleware.jwt())
 
+// Grados y cursos de la institución del orientador
+router.get('/orientadores/grados', [OrientadorController, 'listarGrados']).use(middleware.jwt())
+router.get('/orientadores/cursos', [OrientadorController, 'listarCursos']).use(middleware.jwt())
+router.get('/orientadores/mi-institucion', [OrientadorController, 'miInstitucion']).use(middleware.jwt())
+
 // Listar docentes de la institución del orientador (debe ir antes de /:id)
 router.get('/orientadores/docentes', [DocenteController, 'index']).use(middleware.jwt())
 
 router.get('/orientadores/:id', [OrientadorController, 'show']).use(middleware.jwt())
-router.post('/orientadores', [OrientadorController, 'store']).use(middleware.jwt())
-router.put('/orientadores/:id', [OrientadorController, 'update']).use(middleware.jwt())
-router.delete('/orientadores/:id', [OrientadorController, 'destroy']).use(middleware.jwt())
+router.post('/orientadores', [OrientadorController, 'store']).use([middleware.jwt(), middleware.coordinadorORector()])
+router.put('/orientadores/:id', [OrientadorController, 'update']).use([middleware.jwt(), middleware.coordinadorORector()])
+router.delete('/orientadores/:id', [OrientadorController, 'destroy']).use([middleware.jwt(), middleware.coordinadorORector()])
 
 // Crear docentes por orientador o admin del sistema
 router
