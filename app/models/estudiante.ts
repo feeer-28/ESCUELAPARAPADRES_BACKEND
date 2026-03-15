@@ -52,6 +52,30 @@ export default class Estudiante extends BaseModel {
   @column()
   declare eps: string | null
 
+  @column()
+  declare direccion: string | null
+
+  @column()
+  declare barrio: string | null
+
+  @column()
+  declare telefono: string | null
+
+  @column({ columnName: 'correo' })
+  declare correoElectronico: string | null
+
+  @column({ columnName: 'discapacidad' })
+  declare discapacidad: string | null
+
+  @column({ columnName: 'medicamentos' })
+  declare medicamentos: string | null
+
+  @column({ columnName: 'alergias' })
+  declare alergias: string | null
+
+  @column({ columnName: 'enfermedades' })
+  declare enfermedades: string | null
+
   @column({ columnName: 'curso_id' })
   declare cursoId: number
 

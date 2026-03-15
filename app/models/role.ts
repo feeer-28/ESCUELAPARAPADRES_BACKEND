@@ -1,6 +1,7 @@
 import { BaseModel, column, hasMany } from '@adonisjs/lucid/orm'
 import type { HasMany } from '@adonisjs/lucid/types/relations'
 
+import Funcionario from '#models/funcionario'
 import Usuario from '#models/usuario'
 
 export default class Role extends BaseModel {
@@ -19,4 +20,9 @@ export default class Role extends BaseModel {
     foreignKey: 'rolId',
   })
   declare usuarios: HasMany<typeof Usuario>
+
+  @hasMany(() => Funcionario, {
+    foreignKey: 'rolId',
+  })
+  declare funcionarios: HasMany<typeof Funcionario>
 }

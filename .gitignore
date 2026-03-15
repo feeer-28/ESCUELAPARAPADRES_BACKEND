@@ -2,12 +2,19 @@
 node_modules
 build
 tmp
+uploads
 
 # Secrets
 .env
 .env.local
 .env.production.local
 .env.development.local
+.env.*
+!.env.example
+
+# Credenciales y secretos
+app/catedra-familia-movil-firebase-adminsdk-fbsvc-4b0b148ae6.json
+app/google-services.json
 
 # Frontend assets compiled code
 public/assets
@@ -15,6 +22,7 @@ public/assets
 # Build tools specific
 npm-debug.log
 yarn-error.log
+*.tgz
 
 # Editors specific
 .fleet
@@ -23,3 +31,32 @@ yarn-error.log
 
 # Platform specific
 .DS_Store
+
+# Test scripts and local executables
+arreglar_acudiente.js
+ejecutar_prueba_real.js
+ejecutar_prueba_real.mjs
+enviar_notificacion_directa.cjs
+ngrok.exe
+ngrok.zip
+prueba_completa_notificaciones.js
+prueba_login.js
+prueba_login_completo.js
+prueba_ngrok_simple.js
+prueba_notificaciones_completas.js
+prueba_notificaciones_simple.js
+prueba_notificaciones_tareas.js
+registrar_dispositivo.js
+test_completo_v2.js
+test_eventos.js
+test_notificaciones_unificadas.js
+verificar_firebase.js
+verificar_ngrok.js
+verificar_roles.js
+verificar_tablas.js
+check_table_structure.ts
+test_supabase_connection.ts
+
+# Scripts in controller folder (should not be there)
+app/controllers/ejecutar_prueba_real.js
+

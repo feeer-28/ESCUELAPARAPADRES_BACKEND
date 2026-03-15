@@ -25,6 +25,8 @@ server.errorHandler(() => import('#exceptions/handler'))
 server.use([
   () => import('#middleware/container_bindings_middleware'),
   () => import('#middleware/force_json_response_middleware'),
+  // Serve static assets from the "public" folder (e.g., /uploads/...)
+  () => import('@adonisjs/static/static_middleware'),
   () => import('@adonisjs/cors/cors_middleware'),
 ])
 
@@ -39,5 +41,11 @@ router.use([() => import('@adonisjs/core/bodyparser_middleware'), () => import('
  * the routes or the routes group.
  */
 export const middleware = router.named({
-  auth: () => import('#middleware/auth_middleware')
+  auth: () => import('#middleware/auth_middleware'),
+  jwt: () => import('#middleware/jwt_auth_middleware'),
+  adminSistema: () => import('#middleware/admin_sistema_middleware'),
+  rector: () => import('#middleware/rector_middleware'),
+  coordinador: () => import('#middleware/coordinador_middleware'),
+  coordinadorORector: () => import('#middleware/coordinador_o_rector_middleware'),
+  orientadorOAdmin: () => import('#middleware/orientador_o_admin_middleware'),
 })

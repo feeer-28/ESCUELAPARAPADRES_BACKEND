@@ -4,6 +4,7 @@ import type { BelongsTo, HasMany } from '@adonisjs/lucid/types/relations'
 
 import Asignacion from '#models/asignacion'
 import Categoria from '#models/categoria'
+import Institucion from '#models/institucion'
 import Usuario from '#models/usuario'
 
 export default class BancoTarea extends BaseModel {
@@ -23,6 +24,9 @@ export default class BancoTarea extends BaseModel {
 
   @column({ columnName: 'categoria_id' })
   declare categoriaId: number
+
+  @column({ columnName: 'institucion_id' })
+  declare institucionId: number | null
 
   @column({ columnName: 'creado_por' })
   declare creadoPor: number | null
@@ -52,6 +56,11 @@ export default class BancoTarea extends BaseModel {
     foreignKey: 'categoriaId',
   })
   declare categoria: BelongsTo<typeof Categoria>
+
+  @belongsTo(() => Institucion, {
+    foreignKey: 'institucionId',
+  })
+  declare institucion: BelongsTo<typeof Institucion>
 
   @belongsTo(() => Usuario, {
     foreignKey: 'creadoPor',
